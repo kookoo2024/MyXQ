@@ -1,0 +1,4 @@
+截图标题=JJ象棋
+截图类=Chrome_WidgetWin_0
+点击标题=自定义方案
+点击类=WindowsForms10.COMBOBOX.app.0.141b42a_r7_ad1
