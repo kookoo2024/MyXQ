@@ -31,6 +31,8 @@ namespace VinXiangQi
         public bool BackgroundAnalysis = false;
         public double MinTimeUsingOpenbook = 1.0;
         public OpenBookMode OpenbookMode = OpenBookMode.HighestScore;
+        public int WindowX = -1;
+        public int WindowY = -1;
        
         public enum OpenBookMode
         {

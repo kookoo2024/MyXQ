@@ -49,6 +49,11 @@ namespace VinXiangQi
         Color NegativeColor = Color.DarkRed;
         Color MateColor = Color.Green;
 
+        static readonly Pen ArrowRedPen = new Pen(Color.FromArgb(180, Color.OrangeRed), 10) { EndCap = LineCap.ArrowAnchor };
+        static readonly Pen ArrowBluePen = new Pen(Color.FromArgb(180, Color.Blue), 10) { EndCap = LineCap.ArrowAnchor };
+        static readonly Pen ArrowRedDimPen = new Pen(Color.FromArgb(180, Color.DarkOrange), 8) { EndCap = LineCap.ArrowAnchor };
+        static readonly Pen ArrowBlueDimPen = new Pen(Color.FromArgb(180, Color.DarkGreen), 8) { EndCap = LineCap.ArrowAnchor };
+
         public string ExpectedMove = "";
         public bool ChangeDetectedAfterClick = false;
         public bool TurnToOpponent = false;
@@ -139,7 +144,9 @@ namespace VinXiangQi
                     {
                         this.Invoke(new Action(() =>
                         {
+                            var oldImg = pictureBox_show_result.Image;
                             pictureBox_show_result.Image = Screenshot();
+                            oldImg?.Dispose();
                             pictureBox_show_result.Refresh();
                         }));
                         Thread.Sleep(200);
@@ -151,76 +158,90 @@ namespace VinXiangQi
                         Thread.Sleep(50);
                         continue;
                     }
-                   Bitmap screenshot = Screenshot();
-                    Size maxSize = screenshot.Size;
-                    if (LastBoardAreaBitmap != null && BoardArea.X != -1)
-                    {
-                        Bitmap currentBoard = (Bitmap)ImageHelper.CropImage(screenshot, BoardArea);
-                        DisplayStatus("检测图像");
-                        bool result = ModelDetectBoard(currentBoard, false);
-                        if (result)
-                        {
-                            LastBoardAreaBitmap = currentBoard;
-                            bool checkValid = Utils.CheckBoardValid(PendingBoard, RedSide);
-                            if (!checkValid)
-                            {
-                                DisplayStatus("当前棋盘不合法，可能是出现了识别错误！");
-                                invalidCount++;
-                                if (invalidCount > 5)
-                                {
-                                    if (ModelList.Count > 1 && !modelChanged)   
-                                    {
-                                        foreach (var model in ModelList)
-                                        {
-                                            if (model.Key != Settings.YoloModel)
-                                            {
-                                                Model = model.Value;
-                                                modelChanged = true;
-                                                DisplayStatus("尝试切换模型识别");
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    else
-                                    {
-                                        randomTransform = true;
-                                    }
-                                    invalidCount = 0;
-                                    ResetDetection();
-                                }
-                                Thread.Sleep(300);
-                                continue;
-                            }
-                            invalidCount = 0;
-                            bool checkResult = CheckNewBoard();
-                            if (checkResult)
-                            {
-                                if (modelChanged)
-                                {
-                                    Model = ModelList[Settings.YoloModel];
-                                    modelChanged = false;
-                                }
-                                ReloadBoard();
-                            }
-                        }
-                        else
-                        {
-                            BoardArea = new Rectangle(-1, -1, -1, -1);
-                            Thread.Sleep(200);
-                            continue;
-                        }
-                    }
-                    else
-                    {
-                        DisplayStatus("识别不到棋盘，重置图像范围");
-                        bool result = ModelDetectBoard(screenshot, true);
-                        if (result)
-                        {
-                            BoardArea = Utils.ExpendArea(Utils.RestoreArea(BoardArea, BoardAreaRaw), maxSize);
-                            LastBoardAreaBitmap = (Bitmap)ImageHelper.CropImage(screenshot, BoardArea);
-                            DisplayStatus("更新范围成功");
-                        }
-                    }
+                    Bitmap screenshot = Screenshot();
+                     try
+                     {
+                         Size maxSize = screenshot.Size;
+                         if (LastBoardAreaBitmap != null && BoardArea.X != -1)
+                         {
+                             using (Bitmap currentBoard = (Bitmap)ImageHelper.CropImage(screenshot, BoardArea))
+                             {
+                                 DisplayStatus("检测图像");
+                                 bool result = ModelDetectBoard(currentBoard, false);
+                                 if (result)
+                                 {
+                                     var oldBitmap = LastBoardAreaBitmap;
+                                     LastBoardAreaBitmap = (Bitmap)currentBoard.Clone();
+                                     oldBitmap?.Dispose();
+                                     bool checkValid = Utils.CheckBoardValid(PendingBoard, RedSide);
+                                     if (!checkValid)
+                                     {
+                                         DisplayStatus("当前棋盘不合法，可能是出现了识别错误！");
+                                         invalidCount++;
+                                         if (invalidCount > 5)
+                                         {
+                                             if (ModelList.Count > 1 && !modelChanged)
+                                             {
+                                                 foreach (var model in ModelList)
+                                                 {
+                                                     if (model.Key != Settings.YoloModel)
+                                                     {
+                                                         Model = model.Value;
+                                                         modelChanged = true;
+                                                         DisplayStatus("尝试切换模型识别");
+                                                         break;
+                                                     }
+                                                 }
+                                             }
+                                             else
+                                             {
+                                                 randomTransform = true;
+                                             }
+                                             invalidCount = 0;
+                                             ResetDetection();
+                                         }
+                                         Thread.Sleep(300);
+                                     }
+                                     else
+                                     {
+                                         invalidCount = 0;
+                                         bool checkResult = CheckNewBoard();
+                                         if (checkResult)
+                                         {
+                                             if (modelChanged)
+                                             {
+                                                 Model = ModelList[Settings.YoloModel];
+                                                 modelChanged = false;
+                                             }
+                                             ReloadBoard();
+                                         }
+                                     }
+                                 }
+                                 else
+                                 {
+                                     BoardArea = new Rectangle(-1, -1, -1, -1);
+                                     Thread.Sleep(200);
+                                 }
+                             }
+                         }
+                         else
+                         {
+                             DisplayStatus("识别不到棋盘，重置图像范围");
+                             bool result = ModelDetectBoard(screenshot, true);
+                             if (result)
+                             {
+                                 BoardArea = Utils.ExpendArea(Utils.RestoreArea(BoardArea, BoardAreaRaw), maxSize);
+                                 var oldBitmap = LastBoardAreaBitmap;
+                                 LastBoardAreaBitmap = (Bitmap)ImageHelper.CropImage(screenshot, BoardArea);
+                                 oldBitmap?.Dispose();
+                                 DisplayStatus("更新范围成功");
+                             }
+                         }
+                     }
+                     finally
+                     {
+                         screenshot.Dispose();
+                     }
 
                 }
                 catch (Exception ex)
@@ -250,90 +271,70 @@ namespace VinXiangQi
                 int yoffset = height / 2;
                 BoardGDI.Clear(Color.White);
                 BoardGDI.DrawImage(Properties.Resources.board, 0, 0, width * 10, height * 11);
-                // draw chess
                 for (int y = 0; y < 10; y++)
                 {
                     for (int x = 0; x < 9; x++)
                     {
                         if (renderBoard[x, y] != null && renderBoard[x, y] != "")
                         {
-                            string name = renderBoard[x, y];
                             BoardGDI.DrawImage((Bitmap)Properties.Resources.ResourceManager.GetObject(renderBoard[x, y]), x * width + xoffset, y * height + yoffset, width, height);
                         }
                     }
                 }
-                // draw hint
-                Pen rp = new Pen(Color.FromArgb(180, Color.OrangeRed), 10);
-                Pen bp = new Pen(Color.FromArgb(180, Color.Blue), 10);
-                Pen rp_dim = new Pen(Color.FromArgb(180, Color.DarkOrange), 8);
-                Pen bp_dim = new Pen(Color.FromArgb(180, Color.DarkGreen), 8);
-                rp.EndCap = LineCap.ArrowAnchor;
-                bp.EndCap = LineCap.ArrowAnchor;
-                rp_dim.EndCap = LineCap.ArrowAnchor;
-                bp_dim.EndCap = LineCap.ArrowAnchor;
                 if (BestMove.From.X != -1)
                 {
                     Point bestFrom = new Point(BestMove.From.X * width + xoffset + width / 2, BestMove.From.Y * height + yoffset + height / 2);
                     Point bestTo = new Point(BestMove.To.X * width + xoffset + width / 2, BestMove.To.Y * height + yoffset + height / 2);
-                    if (RedSide)
-                    {
-                        BoardGDI.DrawLine(rp, bestFrom, bestTo);
-                    }
-                    else
-                    {
-                        BoardGDI.DrawLine(bp, bestFrom, bestTo);
-                    }
+                    BoardGDI.DrawLine(RedSide ? ArrowRedPen : ArrowBluePen, bestFrom, bestTo);
                 }
                 if (PonderMove.From.X != -1)
                 {
                     Point ponderFrom = new Point(PonderMove.From.X * width + xoffset + width / 2, PonderMove.From.Y * height + yoffset + height / 2);
                     Point ponderTo = new Point(PonderMove.To.X * width + xoffset + width / 2, PonderMove.To.Y * height + yoffset + height / 2);
-                    if (RedSide)
-                    {
-                        BoardGDI.DrawLine(bp, ponderFrom, ponderTo);
-                    }
-                    else
-                    {
-                        BoardGDI.DrawLine(rp, ponderFrom, ponderTo);
-                    }
+                    BoardGDI.DrawLine(RedSide ? ArrowBluePen : ArrowRedPen, ponderFrom, ponderTo);
                 }
                 if (ShowTwoSteps && Move3.From.X != -1)
                 {
                     Point m3From = new Point(Move3.From.X * width + xoffset + width / 2, Move3.From.Y * height + yoffset + height / 2);
                     Point m3To = new Point(Move3.To.X * width + xoffset + width / 2, Move3.To.Y * height + yoffset + height / 2);
-                    if (RedSide)
-                    {
-                        BoardGDI.DrawLine(rp_dim, m3From, m3To);
-                    }
-                    else
-                    {
-                        BoardGDI.DrawLine(bp_dim, m3From, m3To);
-                    }
+                    BoardGDI.DrawLine(RedSide ? ArrowRedDimPen : ArrowBlueDimPen, m3From, m3To);
                 }
                 if (ShowTwoSteps && Move4.From.X != -1)
                 {
                     Point m4From = new Point(Move4.From.X * width + xoffset + width / 2, Move4.From.Y * height + yoffset + height / 2);
                     Point m4To = new Point(Move4.To.X * width + xoffset + width / 2, Move4.To.Y * height + yoffset + height / 2);
-                    if (RedSide)
-                    {
-                        BoardGDI.DrawLine(bp_dim, m4From, m4To);
-                    }
-                    else
-                    {
-                        BoardGDI.DrawLine(rp_dim, m4From, m4To);
-                    }
+                    BoardGDI.DrawLine(RedSide ? ArrowBlueDimPen : ArrowRedDimPen, m4From, m4To);
                 }
                 if (BackgroundAnalysisMove.From.X != -1)
                 {
                     Point bgFrom = new Point(BackgroundAnalysisMove.From.X * width + xoffset + width / 2, BackgroundAnalysisMove.From.Y * height + yoffset + height / 2);
                     Point bgTo = new Point(BackgroundAnalysisMove.To.X * width + xoffset + width / 2, BackgroundAnalysisMove.To.Y * height + yoffset + height / 2);
-                    if (RedSide)
-                    {
-                        BoardGDI.DrawLine(rp_dim, bgFrom, bgTo);
-                    }
+                    BoardGDI.DrawLine(RedSide ? ArrowRedDimPen : ArrowBlueDimPen, bgFrom, bgTo);
+                }
+
+                int barY = height * 11 - 12;
+                int barH = 10;
+                int barW = width * 10;
+                int segW = barW / 10;
+                int midX = barW / 2;
+                BoardGDI.FillRectangle(Brushes.Red, 0, barY, midX, barH);
+                BoardGDI.FillRectangle(Brushes.Black, midX, barY, barW - midX, barH);
+                for (int i = 1; i < 10; i++)
+                {
+                    BoardGDI.DrawLine(Pens.White, i * segW, barY, i * segW, barY + barH);
+                }
+                if (label_score.Text != "--" && int.TryParse(label_score.Text, out int absScore))
+                {
+                    float ratio = Math.Min(absScore / 3000f, 1.0f);
+                    int offset = (int)(midX * ratio);
+                    bool redAdvantage = label_score.ForeColor == Color.Red;
+                    if (redAdvantage)
+                        BoardGDI.FillRectangle(Brushes.Red, midX, barY, offset, barH);
                     else
+                        BoardGDI.FillRectangle(Brushes.Black, midX - offset, barY, offset, barH);
+                    for (int i = 1; i < 10; i++)
                     {
-                        BoardGDI.DrawLine(bp_dim, bgFrom, bgTo);
+                        BoardGDI.DrawLine(Pens.White, i * segW, barY, i * segW, barY + barH);
                     }
                 }
                 pictureBox_board.Refresh();
@@ -947,6 +948,7 @@ namespace VinXiangQi
                 this.Invoke(new Action(() =>
                 {
                     textBox_engine_log.AppendText(info_str);
+                    TrimEngineLog();
                 }));
             }
             if (infos.ContainsKey("pv"))
@@ -956,6 +958,8 @@ namespace VinXiangQi
                 string bestMove = moves[0];
                 Point fromPoint = Utils.Move2Point(bestMove.Substring(0, 2),RedSide);
                 Point toPoint = Utils.Move2Point(bestMove.Substring(2, 2),RedSide);
+                long nowTick = DateTime.Now.Ticks;
+                bool shouldInvokeUI = (nowTick - _lastInfoInvokeTick) >= 80 * TimeSpan.TicksPerMillisecond;
                 try
                 {
                     info_str = Utils.FenToChina(EngineAnalyzingBoard, moves,RedSide) + "\r\n";
@@ -978,21 +982,26 @@ namespace VinXiangQi
                             }
                         }
                     }
-                    this.Invoke(new Action(() =>
+                    if (shouldInvokeUI)
                     {
-                        textBox_engine_log.SelectionColor = NormalColor;
-                        textBox_engine_log.AppendText(info_str + "\r\n");
-                        string display = "";
-                        string[] circleNums = { "①", "②", "③" };
-                        for (int i = 0; i < 3; i++)
+                        _lastInfoInvokeTick = nowTick;
+                        this.Invoke(new Action(() =>
                         {
-                            if (CandidateMoves[i] != "")
+                            textBox_engine_log.SelectionColor = NormalColor;
+                            textBox_engine_log.AppendText(info_str + "\r\n");
+                            string display = "";
+                            string[] circleNums = { "①", "②", "③" };
+                            for (int i = 0; i < 3; i++)
                             {
-                                display += (display == "" ? "" : " ") + circleNums[i] + CandidateMoves[i];
+                                if (CandidateMoves[i] != "")
+                                {
+                                    display += (display == "" ? "" : " ") + circleNums[i] + CandidateMoves[i];
+                                }
                             }
-                        }
-                        label_moves.Text = display;
-                    }));
+                            label_moves.Text = display;
+                            TrimEngineLog();
+                        }));
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1060,7 +1069,10 @@ namespace VinXiangQi
                     BackgroundAnalysisMove = new ChessMove(fromPoint, toPoint);
                 }
 
-                RenderDisplayBoard();
+                if (shouldInvokeUI)
+                {
+                    RenderDisplayBoard();
+                }
             }
             if (info_str != "")
             {
@@ -1182,6 +1194,19 @@ namespace VinXiangQi
                 ChangeDetectedAfterClick = false;
                 MouseLeftClient_2Point(fromClickPoint.X, fromClickPoint.Y, toClickPoint.X, toClickPoint.Y);
             }));
+        }
+
+        const int MaxLogLines = 500;
+        long _lastInfoInvokeTick;
+
+        void TrimEngineLog()
+        {
+            if (textBox_engine_log.Lines.Length > MaxLogLines)
+            {
+                int removeCount = textBox_engine_log.Lines.Length - MaxLogLines + 50;
+                textBox_engine_log.Select(0, textBox_engine_log.GetFirstCharIndexFromLine(removeCount));
+                textBox_engine_log.SelectedText = "";
+            }
         }
     }
 }

@@ -137,6 +137,11 @@ namespace VinXiangQi
                 Settings.BackgroundAnalysis = false;
                 checkBox_auto_go.Checked = Settings.AutoGo;
                 checkBox_two_steps.Checked = ShowTwoSteps;
+                if (Settings.WindowX >= 0 && Settings.WindowY >= 0)
+                {
+                    this.StartPosition = FormStartPosition.Manual;
+                    this.Location = new Point(Settings.WindowX, Settings.WindowY);
+                }
             }
             catch (Exception ex)
             {
@@ -348,6 +353,8 @@ namespace VinXiangQi
             Engine.AnalyzeQueue.Clear();
             Engine.SkipList.Clear();
             InvalidCount = 0;
+            LastBoardAreaBitmap?.Dispose();
+            LastBoardAreaBitmap = null;
             if (!string.IsNullOrEmpty(Settings.SelectedSolution))
             {
                 string key = Settings.SelectedSolution;
@@ -625,6 +632,9 @@ namespace VinXiangQi
         private void Mainform_FormClosing(object sender, FormClosingEventArgs e)
         {
             Running = false;
+            Settings.WindowX = this.Location.X;
+            Settings.WindowY = this.Location.Y;
+            SaveSettings();
             if (Engine != null)
             {
                 Engine.Stop();
@@ -748,13 +758,6 @@ namespace VinXiangQi
             ResetDetection();
         }
 
-        private void ToolStripMenuItem_copy_fen_Click(object sender, EventArgs e)
-        {
-            string fen = Utils.BoardToFen(CurrentBoard,RedSide ? "w" : "b",RedSide ? "w" : "b");
-            Clipboard.SetText(fen);
-            MessageBox.Show("局面: \n" + fen + "\n 已经复制到剪贴板");
-        }
-
         public void button_screenshot_Click(object sender, EventArgs e)
         {
             Bitmap screen = Screenshot();
@@ -865,9 +868,20 @@ namespace VinXiangQi
             label_close.BackColor = Color.Transparent;
         }
 
-        private void ToolStripMenuItem_exit_Click(object sender, EventArgs e)
+        private void label_topmost_Click(object sender, EventArgs e)
         {
-            this.Close();
+            this.TopMost = !this.TopMost;
+            label_topmost.ForeColor = this.TopMost ? Color.DeepSkyBlue : Color.Gray;
+        }
+
+        private void label_topmost_MouseEnter(object sender, EventArgs e)
+        {
+            label_topmost.BackColor = Color.LightGray;
+        }
+
+        private void label_topmost_MouseLeave(object sender, EventArgs e)
+        {
+            label_topmost.BackColor = Color.Transparent;
         }
 
         private void textBox_engine_log_TextChanged(object sender, EventArgs e)
