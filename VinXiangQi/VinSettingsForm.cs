@@ -62,6 +62,7 @@ namespace VinXiangQi
             checkBox_stop_when_mate.Checked = Mainform.Settings.StopWhenMate;
             numericUpDown_stop_score.Value = (decimal)Mainform.Settings.StopScore;
             checkBox_auto_click.Checked = Mainform.Settings.AutoClick;
+            checkBox_show_floating_score.Checked = Mainform.Settings.ShowFloatingScore;
         }
 
         // === 引擎设置事件 ===
@@ -295,6 +296,16 @@ namespace VinXiangQi
         private void checkBox_auto_click_CheckedChanged(object sender, EventArgs e)
         {
             Mainform.Settings.AutoClick = checkBox_auto_click.Checked;
+            Mainform.SaveSettings();
+        }
+
+        private void checkBox_show_floating_score_CheckedChanged(object sender, EventArgs e)
+        {
+            Mainform.Settings.ShowFloatingScore = checkBox_show_floating_score.Checked;
+            if (Mainform.Settings.ShowFloatingScore)
+                _mainform.InitFloatingScore();
+            else
+                _mainform.HideFloatingScore();
             Mainform.SaveSettings();
         }
 

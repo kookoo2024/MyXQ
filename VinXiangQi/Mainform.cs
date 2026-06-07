@@ -26,6 +26,12 @@ namespace VinXiangQi
         public static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
         [DllImport("user32.dll")]
         public static extern bool ReleaseCapture();
+        [DllImport("user32.dll")]
+        static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOACTIVATE = 0x0010;
         private const int WM_NCLBUTTONDOWN = 0xA1;
         private const int HT_CAPTION = 0x2;
 
@@ -38,7 +44,7 @@ namespace VinXiangQi
         }
 
         // 程序版本
-        public static string Version = "1.4.0";
+        public static string Version = "1.0.0";
 
         // 用于截图的窗口句柄
         public static IntPtr GameHandle = IntPtr.Zero;
@@ -120,6 +126,141 @@ namespace VinXiangQi
             public Point To;
         }
 
+        private Label _floatingScoreLabel;
+        private Form _floatingScoreForm;
+        private System.Windows.Forms.Timer _floatingTopmostTimer;
+        private int _floatingClickCount;
+        private int _floatingClickZone;
+        private System.Windows.Forms.Timer _floatingClickTimer;
+
+        public void InitFloatingScore()
+        {
+            if (!Settings.ShowFloatingScore) return;
+            if (_floatingScoreForm != null && !_floatingScoreForm.IsDisposed) return;
+
+            _floatingScoreForm = new Form
+            {
+                FormBorderStyle = FormBorderStyle.None,
+                StartPosition = FormStartPosition.Manual,
+                Size = new Size(90, 44),
+                TopMost = true,
+                ShowInTaskbar = false,
+                BackColor = SystemColors.Control
+            };
+            _floatingScoreForm.Paint += (s, e) =>
+            {
+                var g = e.Graphics;
+                int w = _floatingScoreForm.ClientSize.Width;
+                int h = _floatingScoreForm.ClientSize.Height;
+                using (Pen p = new Pen(Color.Green, 2))
+                    g.DrawRectangle(p, 1, 1, w - 2, h - 2);
+                using (Pen d = new Pen(Color.Green, 1))
+                {
+                    d.DashStyle = System.Drawing.Drawing2D.DashStyle.Dot;
+                    g.DrawLine(d, w / 3, 4, w / 3, h - 4);
+                    g.DrawLine(d, w * 2 / 3, 4, w * 2 / 3, h - 4);
+                }
+            };
+
+            _floatingScoreLabel = new Label
+            {
+                Dock = DockStyle.Fill,
+                Font = new Font("Consolas", 20F, FontStyle.Bold),
+                ForeColor = Color.Red,
+                Text = "--",
+                TextAlign = ContentAlignment.MiddleCenter
+            };
+            _floatingScoreLabel.MouseDown += FloatingScore_MouseDown;
+            _floatingScoreForm.MouseDown += FloatingScore_MouseDown;
+
+            _floatingScoreForm.Controls.Add(_floatingScoreLabel);
+
+            if (Settings.FloatingScoreX >= 0 && Settings.FloatingScoreY >= 0)
+                _floatingScoreForm.Location = new Point(Settings.FloatingScoreX, Settings.FloatingScoreY);
+            else
+                _floatingScoreForm.Shown += (s, e) => { _floatingScoreForm.Location = new Point(this.Right + 4, this.Top); };
+
+            _floatingScoreForm.Show(this);
+            PinFloatingTopmost();
+
+            if (_floatingTopmostTimer == null)
+            {
+                _floatingTopmostTimer = new System.Windows.Forms.Timer();
+                _floatingTopmostTimer.Interval = 2000;
+                _floatingTopmostTimer.Tick += (s, e) => PinFloatingTopmost();
+            }
+            _floatingTopmostTimer.Start();
+        }
+
+        private void FloatingScore_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left) return;
+
+            int w = _floatingScoreForm.ClientSize.Width;
+            int zone = e.X < w / 3 ? 0 : e.X < w * 2 / 3 ? 1 : 2;
+
+            _floatingClickCount++;
+            if (_floatingClickCount == 1)
+            {
+                _floatingClickZone = zone;
+                if (_floatingClickTimer == null)
+                {
+                    _floatingClickTimer = new System.Windows.Forms.Timer();
+                    _floatingClickTimer.Interval = SystemInformation.DoubleClickTime;
+                    _floatingClickTimer.Tick += FloatingClickTimer_Tick;
+                }
+                _floatingClickTimer.Start();
+                ReleaseCapture();
+                SendMessage(_floatingScoreForm.Handle, WM_NCLBUTTONDOWN, HT_CAPTION, 0);
+                Settings.FloatingScoreX = _floatingScoreForm.Location.X;
+                Settings.FloatingScoreY = _floatingScoreForm.Location.Y;
+            }
+            else if (_floatingClickCount >= 2 && _floatingClickZone == zone)
+            {
+                _floatingClickCount = 0;
+                if (_floatingClickTimer != null) _floatingClickTimer.Stop();
+                switch (zone)
+                {
+                    case 0: StartDetection(false); break;
+                    case 1: if (this.Visible) this.Hide(); else this.Show(); break;
+                    case 2: button_stop_detection_Click(null, null); break;
+                }
+            }
+        }
+
+        private void FloatingClickTimer_Tick(object sender, EventArgs e)
+        {
+            _floatingClickTimer.Stop();
+            _floatingClickCount = 0;
+        }
+
+        void PinFloatingTopmost()
+        {
+            if (_floatingScoreForm == null || _floatingScoreForm.IsDisposed) return;
+            SetWindowPos(_floatingScoreForm.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+
+        public void HideFloatingScore()
+        {
+            if (_floatingTopmostTimer != null)
+            {
+                _floatingTopmostTimer.Stop();
+            }
+            if (_floatingScoreForm != null && !_floatingScoreForm.IsDisposed)
+            {
+                _floatingScoreForm.Close();
+                _floatingScoreForm = null;
+                _floatingScoreLabel = null;
+            }
+        }
+
+        void UpdateFloatingScore(string text, Color color)
+        {
+            if (_floatingScoreLabel == null) return;
+            _floatingScoreLabel.Text = text;
+            _floatingScoreLabel.ForeColor = color;
+        }
+
         private void Mainform_Load(object sender, EventArgs e)
         {
             try
@@ -134,6 +275,7 @@ namespace VinXiangQi
                 InitThreads();
                 InitResultDisplay();
                 InitEngine();
+                InitFloatingScore();
                 Settings.BackgroundAnalysis = false;
                 checkBox_auto_go.Checked = Settings.AutoGo;
                 checkBox_two_steps.Checked = ShowTwoSteps;
@@ -634,6 +776,12 @@ namespace VinXiangQi
             Running = false;
             Settings.WindowX = this.Location.X;
             Settings.WindowY = this.Location.Y;
+            if (_floatingScoreForm != null && !_floatingScoreForm.IsDisposed)
+            {
+                Settings.FloatingScoreX = _floatingScoreForm.Location.X;
+                Settings.FloatingScoreY = _floatingScoreForm.Location.Y;
+                _floatingScoreForm.Close();
+            }
             SaveSettings();
             if (Engine != null)
             {
@@ -897,13 +1045,18 @@ namespace VinXiangQi
             int score;
             if (int.TryParse(scoreStr, out score))
             {
+                string display = (score >= 0 ? "+" : "-") + Math.Abs(score).ToString();
                 label_score.Text = Math.Abs(score).ToString();
                 label_score.ForeColor = score >= 0 ? Color.Red : Color.Black;
+                this.Text = display;
+                UpdateFloatingScore(display, score >= 0 ? Color.Red : Color.Black);
             }
             else
             {
                 label_score.Text = scoreStr;
                 label_score.ForeColor = Color.Red;
+                this.Text = scoreStr;
+                UpdateFloatingScore(scoreStr, Color.Red);
             }
         }
 

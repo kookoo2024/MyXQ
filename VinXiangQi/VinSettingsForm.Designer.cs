@@ -69,6 +69,7 @@ namespace VinXiangQi
             this.numericUpDown_stop_score = new System.Windows.Forms.NumericUpDown();
             this.label_score_unit = new System.Windows.Forms.Label();
             this.checkBox_auto_click = new System.Windows.Forms.CheckBox();
+            this.checkBox_show_floating_score = new System.Windows.Forms.CheckBox();
 
             this.tabControl.SuspendLayout();
             this.tabPage_connection.SuspendLayout();
@@ -532,6 +533,7 @@ namespace VinXiangQi
             // 
             // tabPage_advanced
             // 
+            this.tabPage_advanced.Controls.Add(this.checkBox_show_floating_score);
             this.tabPage_advanced.Controls.Add(this.checkBox_auto_click);
             this.tabPage_advanced.Controls.Add(this.label_score_unit);
             this.tabPage_advanced.Controls.Add(this.numericUpDown_stop_score);
@@ -572,7 +574,7 @@ namespace VinXiangQi
             0,
             0,
             0});
-            this.numericUpDown_stop_score.Location = new System.Drawing.Point(87, 46);
+            this.numericUpDown_stop_score.Location = new System.Drawing.Point(87, 47);
             this.numericUpDown_stop_score.Maximum = new decimal(new int[] {
             40000,
             0,
@@ -595,7 +597,6 @@ namespace VinXiangQi
             // 
             // label_score_unit
             // 
-            this.label_score_unit.AutoSize = true;
             this.label_score_unit.Location = new System.Drawing.Point(173, 50);
             this.label_score_unit.Name = "label_score_unit";
             this.label_score_unit.Size = new System.Drawing.Size(22, 15);
@@ -604,14 +605,23 @@ namespace VinXiangQi
             // 
             // checkBox_auto_click
             // 
-            this.checkBox_auto_click.AutoSize = true;
-            this.checkBox_auto_click.Location = new System.Drawing.Point(14, 86);
+            this.checkBox_auto_click.Location = new System.Drawing.Point(14, 84);
             this.checkBox_auto_click.Name = "checkBox_auto_click";
             this.checkBox_auto_click.Size = new System.Drawing.Size(89, 19);
             this.checkBox_auto_click.TabIndex = 4;
             this.checkBox_auto_click.Text = "自动点击";
             this.checkBox_auto_click.UseVisualStyleBackColor = true;
             this.checkBox_auto_click.CheckedChanged += new System.EventHandler(this.checkBox_auto_click_CheckedChanged);
+            // 
+            // checkBox_show_floating_score
+            // 
+            this.checkBox_show_floating_score.Location = new System.Drawing.Point(14, 115);
+            this.checkBox_show_floating_score.Name = "checkBox_show_floating_score";
+            this.checkBox_show_floating_score.Size = new System.Drawing.Size(120, 19);
+            this.checkBox_show_floating_score.TabIndex = 5;
+            this.checkBox_show_floating_score.Text = "显示悬浮分数";
+            this.checkBox_show_floating_score.UseVisualStyleBackColor = true;
+            this.checkBox_show_floating_score.CheckedChanged += new System.EventHandler(this.checkBox_show_floating_score_CheckedChanged);
             // 
             // openFileDialog_engine
             // 
@@ -706,5 +716,6 @@ namespace VinXiangQi
         private System.Windows.Forms.NumericUpDown numericUpDown_stop_score;
         private System.Windows.Forms.Label label_score_unit;
         private System.Windows.Forms.CheckBox checkBox_auto_click;
+        private System.Windows.Forms.CheckBox checkBox_show_floating_score;
     }
 }

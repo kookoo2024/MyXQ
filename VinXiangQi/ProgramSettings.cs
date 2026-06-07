@@ -33,6 +33,9 @@ namespace VinXiangQi
         public OpenBookMode OpenbookMode = OpenBookMode.HighestScore;
         public int WindowX = -1;
         public int WindowY = -1;
+        public bool ShowFloatingScore = false;
+        public int FloatingScoreX = -1;
+        public int FloatingScoreY = -1;
        
         public enum OpenBookMode
         {
