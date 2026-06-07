@@ -87,7 +87,6 @@
             this.label_score.TabIndex = 15;
             this.label_score.Text = "--";
             this.label_score.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-            this.label_score.MouseDown += new System.Windows.Forms.MouseEventHandler(this.StartDrag);
             // 
             // label_close
             // 
@@ -255,7 +254,6 @@
             this.panel_right.Padding = new System.Windows.Forms.Padding(15, 3, 15, 3);
             this.panel_right.Size = new System.Drawing.Size(66, 184);
             this.panel_right.TabIndex = 0;
-            this.panel_right.MouseDown += new System.Windows.Forms.MouseEventHandler(this.StartDrag);
             // 
             // pictureBox_show_result
             // 
