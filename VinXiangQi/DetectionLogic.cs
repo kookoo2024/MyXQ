@@ -297,6 +297,32 @@ namespace VinXiangQi
                         BoardGDI.DrawLine(rp, ponderFrom, ponderTo);
                     }
                 }
+                if (ShowTwoSteps && Move3.From.X != -1)
+                {
+                    Point m3From = new Point(Move3.From.X * width + xoffset + width / 2, Move3.From.Y * height + yoffset + height / 2);
+                    Point m3To = new Point(Move3.To.X * width + xoffset + width / 2, Move3.To.Y * height + yoffset + height / 2);
+                    if (RedSide)
+                    {
+                        BoardGDI.DrawLine(rp_dim, m3From, m3To);
+                    }
+                    else
+                    {
+                        BoardGDI.DrawLine(bp_dim, m3From, m3To);
+                    }
+                }
+                if (ShowTwoSteps && Move4.From.X != -1)
+                {
+                    Point m4From = new Point(Move4.From.X * width + xoffset + width / 2, Move4.From.Y * height + yoffset + height / 2);
+                    Point m4To = new Point(Move4.To.X * width + xoffset + width / 2, Move4.To.Y * height + yoffset + height / 2);
+                    if (RedSide)
+                    {
+                        BoardGDI.DrawLine(bp_dim, m4From, m4To);
+                    }
+                    else
+                    {
+                        BoardGDI.DrawLine(rp_dim, m4From, m4To);
+                    }
+                }
                 if (BackgroundAnalysisMove.From.X != -1)
                 {
                     Point bgFrom = new Point(BackgroundAnalysisMove.From.X * width + xoffset + width / 2, BackgroundAnalysisMove.From.Y * height + yoffset + height / 2);
@@ -566,6 +592,9 @@ namespace VinXiangQi
 
         async void StartAnalyze(string fen)
         {
+            CandidateMoves = new string[3] { "", "", "" };
+            CandidateScores = new int[3] { 0, 0, 0 };
+            this.Invoke(new Action(() => { label_moves.Text = ""; }));
             await Task.Run(new Action(() =>
             {
                 if (BestMoveList.Count >= 6)
@@ -930,10 +959,39 @@ namespace VinXiangQi
                 try
                 {
                     info_str = Utils.FenToChina(EngineAnalyzingBoard, moves,RedSide) + "\r\n";
+                    string[] moveNames = info_str.Trim().Split(' ');
+                    if (moveNames.Length > 0 && !BackgroundAnalyzing)
+                    {
+                        int pvIdx = 0;
+                        if (infos.ContainsKey("multipv"))
+                        {
+                            int.TryParse(infos["multipv"], out pvIdx);
+                            pvIdx--;
+                        }
+                        if (pvIdx >= 0 && pvIdx < 3)
+                        {
+                            CandidateMoves[pvIdx] = moveNames[0];
+                            int s = 0;
+                            if (infos.ContainsKey("score") && int.TryParse(infos["score"], out s))
+                            {
+                                CandidateScores[pvIdx] = s;
+                            }
+                        }
+                    }
                     this.Invoke(new Action(() =>
                     {
                         textBox_engine_log.SelectionColor = NormalColor;
                         textBox_engine_log.AppendText(info_str + "\r\n");
+                        string display = "";
+                        string[] circleNums = { "①", "②", "③" };
+                        for (int i = 0; i < 3; i++)
+                        {
+                            if (CandidateMoves[i] != "")
+                            {
+                                display += (display == "" ? "" : " ") + circleNums[i] + CandidateMoves[i];
+                            }
+                        }
+                        label_moves.Text = display;
                     }));
                 }
                 catch (Exception ex)
@@ -975,6 +1033,26 @@ namespace VinXiangQi
                     if (moves.Length > 1)
                     {
                         PonderMove = new ChessMove(ponderFrom, ponderTo);
+                    }
+                    if (moves.Length > 2)
+                    {
+                        Point m3From = Utils.Move2Point(moves[2].Substring(0, 2), RedSide);
+                        Point m3To = Utils.Move2Point(moves[2].Substring(2, 2), RedSide);
+                        Move3 = new ChessMove(m3From, m3To);
+                    }
+                    else
+                    {
+                        Move3 = new ChessMove(new Point(-1, -1), new Point(-1, -1));
+                    }
+                    if (moves.Length > 3)
+                    {
+                        Point m4From = Utils.Move2Point(moves[3].Substring(0, 2), RedSide);
+                        Point m4To = Utils.Move2Point(moves[3].Substring(2, 2), RedSide);
+                        Move4 = new ChessMove(m4From, m4To);
+                    }
+                    else
+                    {
+                        Move4 = new ChessMove(new Point(-1, -1), new Point(-1, -1));
                     }
                 }
                 else
@@ -1022,6 +1100,8 @@ namespace VinXiangQi
             {
                 PonderMove = new ChessMove(new Point(-1, -1), new Point(-1, -1));
             }
+            Move3 = new ChessMove(new Point(-1, -1), new Point(-1, -1));
+            Move4 = new ChessMove(new Point(-1, -1), new Point(-1, -1));
             if (!BackgroundAnalyzing)
             {
                 BackgroundAnalysisMove = new ChessMove(new Point(-1, -1), new Point(-1, -1));

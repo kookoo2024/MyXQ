@@ -14,6 +14,7 @@ using Yolov5Net.Scorer.Models;
 using System.Drawing.Drawing2D;
 using System.Threading;
 using System.IO;
+using System.Runtime.InteropServices;
 using Newtonsoft.Json;
 
 
@@ -21,6 +22,16 @@ namespace VinXiangQi
 {
     public partial class Mainform : Form
     {
+        [DllImport("user32.dll")]
+        public static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
+        [DllImport("user32.dll")]
+        public static extern bool ReleaseCapture();
+        private const int WM_NCLBUTTONDOWN = 0xA1;
+        private const int HT_CAPTION = 0x2;
+
+        private bool _isLargeSize = false;
+        private const int SmallW = 225, SmallH = 208;
+        private const int LargeW = 450, LargeH = 416;
         public Mainform()
         {
             InitializeComponent();
@@ -61,7 +72,12 @@ namespace VinXiangQi
         // 用于在示意棋盘上显示箭头
         ChessMove BestMove = new ChessMove(new Point(-1, -1), new Point(-1, -1));
         ChessMove PonderMove = new ChessMove(new Point(-1, -1), new Point(-1, -1));
+        public bool ShowTwoSteps = false;
+        ChessMove Move3 = new ChessMove(new Point(-1, -1), new Point(-1, -1));
+        ChessMove Move4 = new ChessMove(new Point(-1, -1), new Point(-1, -1));
         ChessMove BackgroundAnalysisMove = new ChessMove(new Point(-1, -1), new Point(-1, -1));
+        string[] CandidateMoves = new string[3] { "", "", "" };
+        int[] CandidateScores = new int[3] { 0, 0, 0 };
         // Flag 用于在程序退出时示意其他子线程退出
         public static bool Running = true;
         // 用于判断引擎当前是否存在别的分析任务，是否需要给引擎发送stop，是否需要跳过发送stop产生的bestmove
@@ -115,11 +131,12 @@ namespace VinXiangQi
                 InitOpenBooks();
                 InitYoloModels();
                 InitSolutions();
-                InitSettingsUI();
                 InitThreads();
                 InitResultDisplay();
                 InitEngine();
                 Settings.BackgroundAnalysis = false;
+                checkBox_auto_go.Checked = Settings.AutoGo;
+                checkBox_two_steps.Checked = ShowTwoSteps;
             }
             catch (Exception ex)
             {
@@ -231,13 +248,12 @@ namespace VinXiangQi
             }
         }
 
-        void InitSolutions()
+        public void InitSolutions()
         {
             if (!Directory.Exists(@".\Solutions"))
             {
                 Directory.CreateDirectory(@".\Solutions");
             }
-            comboBox_solution.Items.Clear();
             SolutionList.Clear();
             string[] paramsKeys = "截图标题 截图类 点击标题 点击类".Split(' ');
             foreach (var folder in Directory.GetDirectories(@".\Solutions"))
@@ -274,85 +290,18 @@ namespace VinXiangQi
                     MessageBox.Show("方案: " + file + " 格式错误");
                 }
             }
-            comboBox_solution.Items.Clear();
-            foreach (var solution in SolutionList)
+            // Default selection
+            if (!SolutionList.ContainsKey(Settings.SelectedSolution))
             {
-                comboBox_solution.Items.Add(solution.Key);
-                if (solution.Key == Settings.SelectedSolution)
+                if (SolutionList.Count > 0)
                 {
-                    comboBox_solution.SelectedIndex = comboBox_solution.Items.Count - 1;
-                }
-            }
-            if (comboBox_solution.SelectedItem == null)
-            {
-                if (comboBox_solution.Items.Count > 0)
-                {
-                    Settings.SelectedSolution = comboBox_solution.Items[0].ToString();
-                    comboBox_solution.SelectedIndex = 0;
+                    Settings.SelectedSolution = SolutionList.Keys.First();
                 }
                 else
                 {
                     Settings.SelectedSolution = "";
                 }
                 SaveSettings();
-            }
-        }
-
-        void InitSettingsUI()
-        {
-            // 引擎多选框
-            comboBox_engine.Items.Clear();
-            comboBox_engine.Text = "";
-            int selectedIndex = 0;
-            foreach (var engine in Settings.EngineList)
-            {
-                comboBox_engine.Items.Add(engine.Key);
-                if (engine.Key == Settings.SelectedEngine)
-                {
-                    selectedIndex = comboBox_engine.Items.Count - 1;
-                }
-            }
-            if (comboBox_engine.Items.Count > 0)
-            {
-                comboBox_engine.SelectedIndex = selectedIndex;
-                Settings.SelectedEngine = comboBox_engine.Items[selectedIndex].ToString();
-                SaveSettings();
-            }
-            // 线程数
-            numericUpDown_thread_count.Value = Settings.ThreadCount;
-            // 步时
-            numericUpDown_step_time.Value = (decimal)Settings.EngineStepTime;
-            // 思考深度
-            numericUpDown_engine_depth.Value = (decimal)Settings.EngineDepth;
-            // 自动走棋
-            checkBox_auto_go.Checked = Settings.AutoGo;
-            // 缩放比
-            numericUpDown_scale_factor.Value = (decimal)Settings.ScaleFactor;
-            // 通用截图
-            checkBox_universal_mode.Checked = Settings.UniversalMode;
-            // 通用鼠标
-            checkBox_universal_mouse.Checked = Settings.UniversalMouse;
-            // 分析模式
-            checkBox_analyze_mode.Checked = Settings.AnalyzingMode;
-            // 自动点击
-            checkBox_auto_click.Checked = Settings.AutoClick;
-            // 绝杀自动立即走棋
-            checkBox_stop_when_mate.Checked = Settings.StopWhenMate;
-            // 自动走棋分数
-            numericUpDown_stop_score.Value = (decimal)Settings.StopScore;
-            // Yolo模型选择
-            comboBox_yolo_models.Items.Clear();
-            foreach (var yolo in ModelList)
-            {
-                comboBox_yolo_models.Items.Add(yolo.Key);
-                if (yolo.Key == Settings.YoloModel)
-                {
-                    comboBox_yolo_models.SelectedIndex = comboBox_yolo_models.Items.Count - 1;
-                }
-            }
-            if (comboBox_yolo_models.Items.Count > 0)
-            {
-                if (comboBox_yolo_models.SelectedItem == null) comboBox_yolo_models.SelectedIndex = 0;
             }
         }
 
@@ -363,7 +312,7 @@ namespace VinXiangQi
             RenderDisplayBoard();
         }
 
-        void InitEngine()
+        public void InitEngine()
         {
             if (Engine != null)
             {
@@ -387,6 +336,7 @@ namespace VinXiangQi
                     Engine.BestMoveEvent += Engine_BestMove_Event;
                     Engine.InfoEvent += Engine_InfoEvent;
                     Engine.Init();
+                    try { Engine.SetOption("MultiPV", "3"); } catch { }
                 }
 
             }
@@ -434,6 +384,7 @@ namespace VinXiangQi
             }
             if (checkBox_debug.Checked)
             {
+                ScreenDebug = false;
                 checkBox_debug.Checked = false;
             }
             if (BackgroundAnalyzing)
@@ -449,17 +400,17 @@ namespace VinXiangQi
         void DisplayStatus(string status)
         {
             Debug.WriteLine(status);
-            this.Invoke(new Action(() => label_status.Text = "识别状态: " + status));
+            try { this.Invoke(new Action(() => this.Text = $"Vin象棋 {Version} - {status}")); } catch { }
         }
 
-        void ModeDisplay(string mode="")
+        public void ModeDisplay(string mode="")
         {
             if (string.IsNullOrEmpty(mode))
             {
                 mode = DetectEnabled ? "识别中" : "空闲";
             }
             Debug.WriteLine(mode);
-            this.Invoke(new Action(() => label_detection_status.Text = "连线状态: " + mode));
+            try { this.Invoke(new Action(() => this.Text = $"Vin象棋 {Version} [{mode}]")); } catch { }
         }
 
         void MouseLeftClient_2Point(int x1, int y1, int x2, int y2)
@@ -500,8 +451,6 @@ namespace VinXiangQi
                 MouseHelper.MouseOperations.MouseEvent(MouseHelper.MouseOperations.MouseEventFlags.LeftDown);
                 MouseHelper.MouseOperations.MouseEvent(MouseHelper.MouseOperations.MouseEventFlags.LeftUp);
                 MouseHelper.MouseOperations.SetCursorPosition(originalPos.X, originalPos.Y);
-                //Thread.Sleep(50);
-                //MouseHelper.MouseOperations.SetCursorPosition(originalPos.X, originalPos.Y);
             }
             else
             {
@@ -509,7 +458,7 @@ namespace VinXiangQi
             }
         }
 
-        void GetHandle()
+        public void GetHandle()
         {
             Task.Run(new Action(() =>
             {
@@ -532,12 +481,7 @@ namespace VinXiangQi
                     Debug.WriteLine(handle + " " + ScreenshotHelper.GetWindowTitle(handle));
                     Debug.WriteLine(ScreenshotHelper.GetWindowRectangleWithShadow(handle));
                     Debug.WriteLine(ScreenshotHelper.GetWindowClass(handle));
-                }    
-                this.Invoke(new Action(() =>
-                {
-                    comboBox_solution.SelectedItem = null;
-                    comboBox_solution.Text = "自定义方案";
-                }));
+                }
             }));
         }
 
@@ -602,7 +546,7 @@ namespace VinXiangQi
             }
         }
 
-        void LoadCurrentSolution()
+        public void LoadCurrentSolution()
         {
             string[] imgExtensions = new string[] { "png", "jpg", "bmp", "jpeg" };
             if (Settings.SelectedSolution == "剪切板")
@@ -799,148 +743,9 @@ namespace VinXiangQi
             }
         }
 
-        private void button_redetect_Click(object sender, EventArgs e)
+        public void button_redetect_Click(object sender, EventArgs e)
         {
             ResetDetection();
-        }
-
-        private void numericUpDown_thread_count_ValueChanged(object sender, EventArgs e)
-        {
-            string threadStr = numericUpDown_thread_count.Value.ToString();
-            if (Engine != null)
-            {
-                Engine.SetOption("Threads", threadStr);
-            }
-            Settings.ThreadCount = (int)numericUpDown_thread_count.Value;
-            if (Settings.CurrentEngine == null)
-            {
-                return;
-            }
-            if (Settings.CurrentEngine.Configs.ContainsKey("Threads"))
-            {
-                Settings.CurrentEngine.Configs["Threads"] = threadStr;
-            }
-            else
-            {
-                Settings.CurrentEngine.Configs.Add("Threads", threadStr);
-            }
-            SaveSettings();
-        }
-
-        private void button_engine_add_Click(object sender, EventArgs e)
-        {
-            if (openFileDialog_engine.ShowDialog() == DialogResult.OK)
-            {
-                string path = openFileDialog_engine.FileName;
-                path = path.Replace(Environment.CurrentDirectory, ".");
-                if (Settings.EngineList.ContainsKey(path))
-                {
-                    MessageBox.Show("该引擎已存在");
-                    return;
-                }
-                EngineSettings esettings = new EngineSettings();
-                esettings.ExePath = path;
-                Settings.EngineList.Add(path, esettings);
-                SaveSettings();
-                InitSettingsUI();
-            }
-        }
-
-        private void comboBox_engine_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            if (comboBox_engine.SelectedItem.ToString() != Settings.SelectedEngine)
-            {
-                Settings.SelectedEngine = comboBox_engine.SelectedItem.ToString();
-                if (!Settings.EngineList.ContainsKey(Settings.SelectedEngine) || !File.Exists(Settings.EngineList[Settings.SelectedEngine].ExePath))
-                {
-                    MessageBox.Show("引擎文件不存在！");
-                    return;
-                }
-                InitEngine();
-            }
-        }
-
-        private void button_engine_delete_Click(object sender, EventArgs e)
-        {
-            if (Settings.SelectedEngine.Length > 0)
-            {
-                if (Engine != null) Engine.Stop();
-                Settings.EngineList.Remove(Settings.SelectedEngine);
-                if (Settings.EngineList.Count > 0)
-                {
-                    Settings.SelectedEngine = Settings.EngineList.Keys.First();
-                }
-                else
-                {
-                    Settings.SelectedEngine = "";
-                }
-                SaveSettings();
-                InitSettingsUI();
-            }
-        }
-
-        private void numericUpDown_step_time_ValueChanged(object sender, EventArgs e)
-        {
-            Settings.EngineStepTime = (double)numericUpDown_step_time.Value;
-            SaveSettings();
-        }
-
-        private void button_get_hwnd_Click(object sender, EventArgs e)
-        {
-            button_stop_detection_Click(sender, e);
-            GetHandle();
-        }
-
-        private void numericUpDown_scale_factor_ValueChanged(object sender, EventArgs e)
-        {
-            Settings.ScaleFactor = 1.0f / (float)numericUpDown_scale_factor.Value;
-            SaveSettings();
-        }
-
-        private void checkBox_universal_mode_CheckedChanged(object sender, EventArgs e)
-        {
-            Settings.UniversalMode = checkBox_universal_mode.Checked;
-            SaveSettings();
-        }
-
-        private void checkBox_auto_go_CheckedChanged(object sender, EventArgs e)
-        {
-            Settings.AutoGo = checkBox_auto_go.Checked;
-            if (Settings.AutoGo)
-            {
-                checkBox_analyze_mode.Checked = false;
-                if (BestMove.From.X != -1 && DetectEnabled && EngineAnalyzingBoard != null)
-                {
-                    string mySideStr = RedSide ? "r" : "b";
-                    if (EngineAnalyzingBoard[BestMove.From.X, BestMove.From.Y] != null &&
-                        EngineAnalyzingBoard[BestMove.From.X, BestMove.From.Y].StartsWith(mySideStr + "_"))
-                    {
-                        ChangeDetectedAfterClick = false;
-                        string move = Utils.Point2Move(BestMove.From, BestMove.To);
-                        PlayChess(move);
-                    }
-                }
-            }
-            SaveSettings();
-        }
-
-        private void comboBox_solution_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            if (comboBox_solution.SelectedItem != null)
-            {
-                Settings.SelectedSolution = comboBox_solution.SelectedItem.ToString();
-                SaveSettings();
-                LoadCurrentSolution();
-            }
-            else
-            {
-                if (comboBox_solution.Text == "自定义方案")
-                {
-                    Settings.SelectedSolution = "自定义方案";
-                    SaveSettings();
-                    LoadCurrentSolution();
-                }                    
-            }
         }
 
         private void ToolStripMenuItem_copy_fen_Click(object sender, EventArgs e)
@@ -950,60 +755,7 @@ namespace VinXiangQi
             MessageBox.Show("局面: \n" + fen + "\n 已经复制到剪贴板");
         }
 
-        private void checkBox_debug_CheckedChanged(object sender, EventArgs e)
-        {
-            ScreenDebug = checkBox_debug.Checked;
-            if (checkBox_debug.Checked)
-            {
-                if (DetectEnabled)
-                {
-                    DetectEnabled = false;
-                    ModeDisplay();
-                }
-            }
-        }
-
-        private void checkBox_analyze_mode_CheckedChanged(object sender, EventArgs e)
-        {
-            if (Engine != null)
-            {
-                Engine.StopAnalyze();
-                Engine.AnalyzeQueue.Clear();
-                Engine.SkipList.Clear();
-            }
-            Settings.AnalyzingMode = checkBox_analyze_mode.Checked;
-            if (Settings.AnalyzingMode)
-            {
-                if (Settings.AutoGo)
-                {
-                    checkBox_auto_go.Checked = false;
-                }
-            }
-            SaveSettings();
-        }
-
-        private void comboBox_yolo_models_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            if (comboBox_yolo_models.SelectedItem != null)
-            {
-                Settings.YoloModel = comboBox_yolo_models.SelectedItem.ToString();
-            }
-            Model = ModelList[Settings.YoloModel];
-            SaveSettings();
-        }
-
-        private void button_engine_settings_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void checkBox_universal_mouse_CheckedChanged(object sender, EventArgs e)
-        {
-            Settings.UniversalMouse = checkBox_universal_mouse.Checked;
-            SaveSettings();
-        }
-
-        private void button_screenshot_Click(object sender, EventArgs e)
+        public void button_screenshot_Click(object sender, EventArgs e)
         {
             Bitmap screen = Screenshot();
             if (!Directory.Exists(@".\Solutions\" + Settings.SelectedSolution))
@@ -1014,36 +766,6 @@ namespace VinXiangQi
             editForm.StartPosition = FormStartPosition.CenterParent;
             editForm.Text = "方案 " + Settings.SelectedSolution + " 自动点击图片管理";
             editForm.ShowDialog();
-            InitSolutions();
-        }
-
-        private void checkBox_auto_click_CheckedChanged(object sender, EventArgs e)
-        {
-            Settings.AutoClick = checkBox_auto_click.Checked;
-            SaveSettings();
-        }
-
-        private void checkBox_stop_when_mate_CheckedChanged(object sender, EventArgs e)
-        {
-            Settings.StopWhenMate = checkBox_stop_when_mate.Checked;
-            SaveSettings();
-        }
-
-        private void button_go_immediately_Click(object sender, EventArgs e)
-        {
-            Engine.StopAnalyze();
-        }
-
-        private void button_openbook_settings_Click(object sender, EventArgs e)
-        {
-
-        }
-
-        private void button_save_as_solution_Click(object sender, EventArgs e)
-        {
-            SolutionSavingForm ssf = new SolutionSavingForm();
-            ssf.StartPosition = FormStartPosition.CenterParent;
-            ssf.ShowDialog();
             InitSolutions();
         }
 
@@ -1064,9 +786,10 @@ namespace VinXiangQi
             StartDetection(true);
         }
 
-        private void button_stop_detection_Click(object sender, EventArgs e)
+        public void button_stop_detection_Click(object sender, EventArgs e)
         {
             DetectEnabled = false;
+            ScreenDebug = true;
             checkBox_debug.Checked = true;
             if (Engine != null)
             {
@@ -1075,44 +798,98 @@ namespace VinXiangQi
             ModeDisplay();
         }
 
-        private void numericUpDown_engine_depth_ValueChanged(object sender, EventArgs e)
-        {
-            Settings.EngineDepth = (int)numericUpDown_engine_depth.Value;
-            SaveSettings();
-        }
-
-        private void numericUpDown_stop_score_ValueChanged(object sender, EventArgs e)
-        {
-            Settings.StopScore = (int)numericUpDown_stop_score.Value;
-            SaveSettings();
-        }
-
-        private void button_advance_settings_Click(object sender, EventArgs e)
+        public void button_advance_settings_Click(object sender, EventArgs e)
         {
             DetectionSettingsForm detectionSettingsForm = new DetectionSettingsForm();
             detectionSettingsForm.StartPosition = FormStartPosition.CenterParent;
             detectionSettingsForm.ShowDialog();
         }
 
-        private void pictureBox_show_result_Click(object sender, EventArgs e)
+        private void button_settings_Click(object sender, EventArgs e)
         {
-            if (pictureBox_show_result.Image != null)
+            using (VinSettingsForm settingsForm = new VinSettingsForm(this))
             {
-                ImageDisplayForm imageDisplayForm = new ImageDisplayForm(pictureBox_show_result.Image);
-                imageDisplayForm.Show();
+                settingsForm.StartPosition = FormStartPosition.CenterParent;
+                settingsForm.ShowDialog(this);
             }
         }
 
-        private void button_clipboard_solution_Click(object sender, EventArgs e)
+        private void checkBox_auto_go_CheckedChanged(object sender, EventArgs e)
         {
-            if (SolutionList.ContainsKey("剪切板"))
+            Settings.AutoGo = checkBox_auto_go.Checked;
+            SaveSettings();
+        }
+
+        private void checkBox_two_steps_CheckedChanged(object sender, EventArgs e)
+        {
+            ShowTwoSteps = checkBox_two_steps.Checked;
+            RenderDisplayBoard();
+        }
+
+        private void StartDrag(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
             {
-                Settings.SelectedSolution = "剪切板";
+                ReleaseCapture();
+                SendMessage(this.Handle, WM_NCLBUTTONDOWN, HT_CAPTION, 0);
+            }
+        }
+
+        private void button_start_Click(object sender, EventArgs e)
+        {
+            StartDetection(false);
+        }
+
+        private void button_size_Click(object sender, EventArgs e)
+        {
+            _isLargeSize = !_isLargeSize;
+            this.ClientSize = _isLargeSize
+                ? new Size(LargeW, LargeH)
+                : new Size(SmallW, SmallH);
+        }
+
+        private void label_close_Click(object sender, EventArgs e)
+        {
+            this.Close();
+        }
+
+        private void label_close_MouseEnter(object sender, EventArgs e)
+        {
+            label_close.ForeColor = Color.White;
+            label_close.BackColor = Color.IndianRed;
+        }
+
+        private void label_close_MouseLeave(object sender, EventArgs e)
+        {
+            label_close.ForeColor = Color.Gray;
+            label_close.BackColor = Color.Transparent;
+        }
+
+        private void ToolStripMenuItem_exit_Click(object sender, EventArgs e)
+        {
+            this.Close();
+        }
+
+        private void textBox_engine_log_TextChanged(object sender, EventArgs e)
+        {
+            string text = textBox_engine_log.Text;
+            if (string.IsNullOrEmpty(text)) return;
+            int lastIdx = text.LastIndexOf("得分: ");
+            if (lastIdx < 0) return;
+            string afterScore = text.Substring(lastIdx + 4);
+            int endIdx = afterScore.IndexOf(' ');
+            if (endIdx < 0) endIdx = afterScore.Length;
+            string scoreStr = afterScore.Substring(0, endIdx).Trim();
+            int score;
+            if (int.TryParse(scoreStr, out score))
+            {
+                label_score.Text = Math.Abs(score).ToString();
+                label_score.ForeColor = score >= 0 ? Color.Red : Color.Black;
             }
             else
             {
-                SolutionList.Add("剪切板", new Solution("", "", "", ""));
-                Settings.SelectedSolution = "剪切板";
+                label_score.Text = scoreStr;
+                label_score.ForeColor = Color.Red;
             }
         }
 
@@ -1140,7 +917,6 @@ namespace VinXiangQi
                 }
                 SaveSettings();
             }
-            InitSettingsUI();
         }
     }
 }
