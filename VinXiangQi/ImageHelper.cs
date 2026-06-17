@@ -98,12 +98,8 @@ namespace VinXiangQi
             if (imageA.Width != imageB.Width) return false;
             if (imageA.Height != imageB.Height) return false;
 
-            var hashA = ShaHash(imageA);
-            var hashB = ShaHash(imageB);
-
-            return !hashA
-                .Where((nextByte, index) => nextByte != hashB[index])
-                .Any();
+            // 直接逐字节比较内存，比原先的 SHA256 全图哈希快几个数量级
+            return CompareMemCmp((Bitmap)imageA, (Bitmap)imageB);
         }
 
         public static Image CropImage(Image img, Rectangle cropArea)

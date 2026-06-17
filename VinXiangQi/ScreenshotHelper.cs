@@ -166,17 +166,24 @@ namespace VinXiangQi
             Rectangle windowRect = GetWindowRectangleWithShadow(hWnd);
             IntPtr hbitmap = CreateCompatibleBitmap(hscrdc, windowRect.Width, windowRect.Height);
             IntPtr hmemdc = CreateCompatibleDC(hscrdc);
-            SelectObject(hmemdc, hbitmap);
+            IntPtr oldObj = SelectObject(hmemdc, hbitmap);
             PrintWindow(hWnd, hmemdc, 0);
-            Bitmap bmp = Image.FromHbitmap(hbitmap);
-            DeleteDC(hscrdc);//删除用过的对象
-            DeleteDC(hmemdc);//删除用过的对象
+            // 先把数据克隆进托管 Bitmap，再释放所有 GDI 句柄。
+            // 原实现 Image.FromHbitmap 后立即 DeleteObject(hbitmap)，
+            // 在部分 GDI+ 版本下 Bitmap 仍引用底层 HBITMAP 数据，存在句柄/数据损坏风险。
+            Bitmap src = Image.FromHbitmap(hbitmap);
+            Bitmap bmp = new Bitmap(src.Width, src.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.DrawImage(src, 0, 0, src.Width, src.Height);
+            }
+            src.Dispose();
+            // 恢复并释放 GDI 资源
+            SelectObject(hmemdc, oldObj);
+            DeleteDC(hscrdc);
+            DeleteDC(hmemdc);
             DeleteObject(hbitmap);
             return bmp;
-            //Rectangle clientRect = GetWindowRectWithoutTitle(hWnd);
-            //int borderSize = (windowRect.Width - clientRect.Width) / 2;
-            //int titleBarSize = (windowRect.Height - clientRect.Height) - borderSize;
-            //return bmp.Clone(new Rectangle(borderSize, titleBarSize, bmp.Width - 2 * borderSize, bmp.Height - titleBarSize - borderSize), bmp.PixelFormat);
         }
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]

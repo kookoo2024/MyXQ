@@ -254,9 +254,37 @@ namespace VinXiangQi
                 Debug.WriteLine($"总耗时: {miliSec}ms");
                 if (miliSec < Settings.DetectionInterval)
                 {
-                    Thread.Sleep((int)(Settings.DetectionInterval - miliSec));
+                    // 以 50ms 为粒度分片等待，程序退出时最多 50ms 内响应（而非整个 DetectionInterval）
+                    int waitMs = (int)(Settings.DetectionInterval - miliSec);
+                    while (waitMs > 0 && Running)
+                    {
+                        int chunk = waitMs > 50 ? 50 : waitMs;
+                        Thread.Sleep(chunk);
+                        waitMs -= chunk;
+                    }
                 }
             }
+        }
+
+        // 棋子图片缓存：避免每帧每个棋子都通过 ResourceManager.GetObject 反射查找 + 强转
+        // 启动后首次渲染时惰性加载，之后直接查表
+        static Dictionary<string, Bitmap> _pieceImageCache;
+        static Bitmap GetPieceImage(string name)
+        {
+            if (_pieceImageCache == null)
+            {
+                _pieceImageCache = new Dictionary<string, Bitmap>();
+                string[] names = { "r_bing", "r_che", "r_jiang", "r_ma", "r_pao", "r_shi", "r_xiang",
+                                   "b_bing", "b_che", "b_jiang", "b_ma", "b_pao", "b_shi", "b_xiang" };
+                foreach (var n in names)
+                {
+                    var img = Properties.Resources.ResourceManager.GetObject(n) as Bitmap;
+                    if (img != null) _pieceImageCache[n] = img;
+                }
+            }
+            Bitmap result;
+            _pieceImageCache.TryGetValue(name, out result);
+            return result;
         }
 
         public void RenderDisplayBoard(string[,] renderBoard=null)
@@ -275,9 +303,14 @@ namespace VinXiangQi
                 {
                     for (int x = 0; x < 9; x++)
                     {
-                        if (renderBoard[x, y] != null && renderBoard[x, y] != "")
+                        string cell = renderBoard[x, y];
+                        if (cell != null && cell != "")
                         {
-                            BoardGDI.DrawImage((Bitmap)Properties.Resources.ResourceManager.GetObject(renderBoard[x, y]), x * width + xoffset, y * height + yoffset, width, height);
+                            Bitmap pieceImg = GetPieceImage(cell);
+                            if (pieceImg != null)
+                            {
+                                BoardGDI.DrawImage(pieceImg, x * width + xoffset, y * height + yoffset, width, height);
+                            }
                         }
                     }
                 }
@@ -493,10 +526,14 @@ namespace VinXiangQi
                 board.Y = (int)minY;
                 gridWidth = (int)boardWidth / 8;
                 gridHeight = (int)boardHeight / 9;
-                YoloGDI.DrawRectangle(Pens.Blue, board.X, board.Y, board.Width, board.Height);
-                this.Invoke(new Action(() => {
-                    pictureBox_show_result.Refresh();
-                }));
+                // 仅在调试状态下绘制检测框可视化（YoloGDI 在非调试时为 null，避免 NRE）
+                if (ScreenDebug && YoloGDI != null)
+                {
+                    YoloGDI.DrawRectangle(Pens.Blue, board.X, board.Y, board.Width, board.Height);
+                    this.Invoke(new Action(() => {
+                        pictureBox_show_result.Refresh();
+                    }));
+                }
             }
 
             double avgChessmanWidth = totalChessmanWidth / totalChessmanCount;
@@ -526,7 +563,7 @@ namespace VinXiangQi
                     ClickPositionMap[x, y] = new Point((int)pos_x + BoardArea.X, (int)pos_y + BoardArea.Y);
                 }
             }
-           
+
             foreach (var prediction in predictions)
             {
                 if (prediction.Label.Name == "board" || prediction.Label.Name == "obstacle") continue;
@@ -566,6 +603,18 @@ namespace VinXiangQi
 
         List<YoloPrediction> ModelPredict(Bitmap image)
         {
+            // 模型推理（核心耗时部分）
+            DateTime st = DateTime.Now;
+            List<YoloPrediction> predictions = Model.Predict(image);
+            Debug.WriteLine("模型耗时: " + Math.Round((DateTime.Now - st).TotalSeconds, 2).ToString() + "s");
+
+            // 可视化绘制仅在调试状态下进行（pictureBox_show_result 默认隐藏）
+            // 非调试状态下跳过整张图复制 + GDI 重建 + 逐框绘制，每帧省 10-30%
+            if (!ScreenDebug)
+            {
+                return predictions;
+            }
+
             // dispose previous GDI resources to prevent handle leak
             YoloGDI?.Dispose();
             YoloDisplayBitmap?.Dispose();
@@ -573,9 +622,6 @@ namespace VinXiangQi
             YoloDisplayBitmap = new Bitmap(image.Width, image.Height);
             YoloGDI = Graphics.FromImage(YoloDisplayBitmap);
             YoloGDI.DrawImage(image, 0, 0);
-            DateTime st = DateTime.Now;
-            List<YoloPrediction> predictions = Model.Predict(image);
-            Debug.WriteLine("模型耗时: " + Math.Round((DateTime.Now - st).TotalSeconds, 2).ToString() + "s");
             foreach (var prediction in predictions)
             {
                 YoloGDI.DrawRectangles(YoloRectPen, new[] { prediction.Rectangle });

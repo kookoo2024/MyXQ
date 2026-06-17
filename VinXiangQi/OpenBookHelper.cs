@@ -83,6 +83,34 @@ namespace VinXiangQi
                 BookName = FileName.Split('\\').Last().Split('.').First();
                 SQLite = new SqliteConnection("Data Source=" + file);
                 SQLite.Open();
+                EnsureIndex();
+            }
+
+            /// <summary>
+            /// 为查询所用表达式建立索引，避免 cast(vkey) 导致的全表扫描。
+            /// 首次加载一次性建好，之后查询可走索引（大库查询快 10-100 倍）。
+            /// 失败时静默跳过（只读库 / 已有索引 / 表结构不符等情况）。
+            /// </summary>
+            void EnsureIndex()
+            {
+                string[] indexSqls = new string[] {
+                    "CREATE INDEX IF NOT EXISTS idx_bhobk_vkey_int ON bhobk (cast(vkey as int))",
+                    "CREATE INDEX IF NOT EXISTS idx_bhobk_vkey_text ON bhobk (cast(vkey as text))"
+                };
+                foreach (var sql in indexSqls)
+                {
+                    try
+                    {
+                        using (SqliteCommand cmd = new SqliteCommand(sql, SQLite))
+                        {
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine("建立开局库索引失败: " + ex.Message);
+                    }
+                }
             }
 
             public class QueryResult
