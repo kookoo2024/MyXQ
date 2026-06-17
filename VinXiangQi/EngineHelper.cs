@@ -53,7 +53,7 @@ namespace VinXiangQi
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.ToString());
+                LogHelper.Error(ex, "EngineHelper.Stop");
             }
         }
 
@@ -90,7 +90,7 @@ namespace VinXiangQi
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine("加载引擎时失败: " + ex.ToString());
+                    LogHelper.Error(ex, "EngineHelper.Init 设置优先级");
                     Thread.Sleep(500);
                 }
             }
@@ -257,8 +257,15 @@ namespace VinXiangQi
         {
             await Task.Run(new Action(() =>
             {
-                SendCommand("stop");
-                SkipList.Add(skipFen);
+                try
+                {
+                    SendCommand("stop");
+                    SkipList.Add(skipFen);
+                }
+                catch (Exception ex)
+                {
+                    LogHelper.Error(ex, "StopAnalyzeAndSkip");
+                }
             }));
         }
 

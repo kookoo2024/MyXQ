@@ -96,8 +96,7 @@ namespace VinXiangQi
                 }
                 catch(Exception ex)
                 {
-                    Debug.WriteLine(ex.ToString());
-                    File.AppendAllText("err.log", DateTime.Now.ToString() + "\r\n" + ex.ToString() + "\r\n\r\n");
+                    LogHelper.Error(ex, "AutoClickLoop");
                 }
                 Thread.Sleep(2000);
             }
@@ -246,8 +245,7 @@ namespace VinXiangQi
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine(ex.ToString());
-                    File.AppendAllText("err.log", DateTime.Now.ToString() + "\r\n" + ex.ToString() + "\r\n\r\n");
+                    LogHelper.Error(ex, "DetectionLoop");
                 }
                 DateTime endTime = DateTime.Now;
                 double miliSec = (endTime - startTime).TotalMilliseconds;
@@ -644,6 +642,8 @@ namespace VinXiangQi
             this.Invoke(new Action(() => { label_moves.Text = ""; }));
             await Task.Run(new Action(() =>
             {
+              try
+              {
                 if (BestMoveList.Count >= 6)
                 {
                     if (BestMoveList[BestMoveList.Count-2] == BestMoveList[BestMoveList.Count - 4] && 
@@ -764,6 +764,11 @@ namespace VinXiangQi
 
                 DisplayStatus("开始引擎计算");
                 Engine.StartAnalyze(fen, Settings.EngineStepTime, Settings.EngineDepth);
+              }
+              catch (Exception ex)
+              {
+                  LogHelper.Error(ex, "StartAnalyze");
+              }
             }));
         }
        
@@ -1051,7 +1056,9 @@ namespace VinXiangQi
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(ex.ToString());
+                    // 此处在引擎输出的后台线程触发（每秒多次），绝不能用 MessageBox，
+                    // 否则挂机自动下棋时会堆叠弹框卡死引擎输出管道
+                    LogHelper.Error(ex, "Engine_InfoEvent");
                 }
                 Point ponderFrom = new Point(-1, -1);
                 Point ponderTo = new Point(-1, -1);
@@ -1231,14 +1238,21 @@ namespace VinXiangQi
 
         public async void PlayChess(string move)
         {
-            if (move.Length != 4) return;
+            if (move == null || move.Length != 4) return;
             await Task.Run(new Action(()=>{
+              try
+              {
                 Point fromPoint = Utils.Move2Point(move.Substring(0, 2),RedSide);
                 Point toPoint = Utils.Move2Point(move.Substring(2, 2),RedSide);
                 Point fromClickPoint = ClickPositionMap[fromPoint.X, fromPoint.Y];
                 Point toClickPoint = ClickPositionMap[toPoint.X, toPoint.Y];
                 ChangeDetectedAfterClick = false;
                 MouseLeftClient_2Point(fromClickPoint.X, fromClickPoint.Y, toClickPoint.X, toClickPoint.Y);
+              }
+              catch (Exception ex)
+              {
+                  LogHelper.Error(ex, "PlayChess");
+              }
             }));
         }
 

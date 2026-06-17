@@ -265,7 +265,6 @@ namespace VinXiangQi
         {
             try
             {
-                StatisticsHelper.Statistics();
                 this.Text = $"Vin象棋 {Version}";
                 InitFolders();
                 LoadSettings();
@@ -338,7 +337,7 @@ namespace VinXiangQi
                 {
                     book.Value.Dispose();
                 }
-                catch (Exception ex) { Debug.WriteLine(ex.ToString()); }
+                catch (Exception ex) { LogHelper.Error(ex, "InitOpenBooks 释放开局库"); }
             }
             OpenBookList.Clear();
             foreach (var file in Directory.GetFiles(OPENBOOK_FOLDER))
@@ -378,7 +377,7 @@ namespace VinXiangQi
                     }
                     catch (Exception ex)
                     {
-                        File.AppendAllText("err.log", $"加载模型 {modelName} 失败: {ex}\r\n");
+                        LogHelper.Error(ex, "加载模型 " + modelName);
                     }
                 }
             }
@@ -483,7 +482,7 @@ namespace VinXiangQi
                     Engine.BestMoveEvent += Engine_BestMove_Event;
                     Engine.InfoEvent += Engine_InfoEvent;
                     Engine.Init();
-                    try { Engine.SetOption("MultiPV", "3"); } catch { }
+                    try { Engine.SetOption("MultiPV", "3"); } catch (Exception ex) { LogHelper.Warn("设置 MultiPV 失败(引擎可能不支持): " + ex.Message); }
                 }
 
             }
@@ -688,7 +687,7 @@ namespace VinXiangQi
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.Message);
+                LogHelper.Error(ex, "Screenshot");
                 GameHandle = IntPtr.Zero;
                 ClickHandle = IntPtr.Zero;
                 return new Bitmap(1, 1);
@@ -795,7 +794,7 @@ namespace VinXiangQi
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine(ex.ToString());
+                    LogHelper.Error(ex, "Mainform 后台任务");
                 }
             }
         }

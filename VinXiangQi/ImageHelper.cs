@@ -110,7 +110,7 @@ namespace VinXiangQi
             }
             catch (Exception ex)
             {
-                Debug.WriteLine(ex.ToString());
+                LogHelper.Error(ex, "ImageHelper.CropImage");
                 return new Bitmap(10, 10);
             }
         }
