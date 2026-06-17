@@ -41,9 +41,9 @@
             // 
             // button_add_engine
             // 
-            this.button_add_engine.Location = new System.Drawing.Point(12, 9);
+            this.button_add_engine.Location = new System.Drawing.Point(16, 14);
             this.button_add_engine.Name = "button_add_engine";
-            this.button_add_engine.Size = new System.Drawing.Size(100, 34);
+            this.button_add_engine.Size = new System.Drawing.Size(104, 32);
             this.button_add_engine.TabIndex = 1;
             this.button_add_engine.Text = "添加引擎";
             this.button_add_engine.UseVisualStyleBackColor = true;
@@ -51,9 +51,9 @@
             // 
             // button_delete_engine
             // 
-            this.button_delete_engine.Location = new System.Drawing.Point(118, 9);
+            this.button_delete_engine.Location = new System.Drawing.Point(126, 14);
             this.button_delete_engine.Name = "button_delete_engine";
-            this.button_delete_engine.Size = new System.Drawing.Size(100, 34);
+            this.button_delete_engine.Size = new System.Drawing.Size(104, 32);
             this.button_delete_engine.TabIndex = 2;
             this.button_delete_engine.Text = "删除引擎";
             this.button_delete_engine.UseVisualStyleBackColor = true;
@@ -61,9 +61,9 @@
             // 
             // button_engine_settings
             // 
-            this.button_engine_settings.Location = new System.Drawing.Point(224, 9);
+            this.button_engine_settings.Location = new System.Drawing.Point(236, 14);
             this.button_engine_settings.Name = "button_engine_settings";
-            this.button_engine_settings.Size = new System.Drawing.Size(100, 34);
+            this.button_engine_settings.Size = new System.Drawing.Size(104, 32);
             this.button_engine_settings.TabIndex = 3;
             this.button_engine_settings.Text = "引擎设置";
             this.button_engine_settings.UseVisualStyleBackColor = true;
@@ -81,9 +81,12 @@
             this.columnHeader_path});
             this.listView_engine_list.FullRowSelect = true;
             this.listView_engine_list.HideSelection = false;
-            this.listView_engine_list.Location = new System.Drawing.Point(12, 52);
+            this.listView_engine_list.Location = new System.Drawing.Point(16, 56);
             this.listView_engine_list.Name = "listView_engine_list";
-            this.listView_engine_list.Size = new System.Drawing.Size(675, 315);
+            this.listView_engine_list.Size = new System.Drawing.Size(667, 307);
+            this.listView_engine_list.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+            | System.Windows.Forms.AnchorStyles.Left)
+            | System.Windows.Forms.AnchorStyles.Right)));
             this.listView_engine_list.TabIndex = 5;
             this.listView_engine_list.UseCompatibleStateImageBehavior = false;
             this.listView_engine_list.View = System.Windows.Forms.View.Details;
