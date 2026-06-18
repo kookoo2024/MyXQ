@@ -996,6 +996,37 @@ namespace VinXiangQi
                     $"nps: {(infos.ContainsKey("nps") ? Math.Round(double.Parse(infos["nps"]) / 1000) : 0)}K" +
                     "\r\n"
                     );
+                // 同步更新浮动分数窗：分数 + 深度，使其与日志同源且实时
+                // 在后台线程触发，必须封送到 UI 线程更新绘制
+                string _depthStr = "";
+                if (infos.ContainsKey("depth"))
+                {
+                    double dd;
+                    if (double.TryParse(infos["depth"], out dd))
+                        _depthStr = "D" + ((int)dd).ToString();
+                    else
+                        _depthStr = infos["depth"];
+                }
+                int _floatScore;
+                Color _floatColor;
+                string _floatText;
+                if (infos["score"].Contains("绝杀"))
+                {
+                    _floatText = "杀";
+                    _floatColor = FloatScoreMate;
+                }
+                else if (int.TryParse(infos["score"], out _floatScore))
+                {
+                    _floatText = (_floatScore >= 0 ? "+" : "-") + Math.Abs(_floatScore).ToString();
+                    // 浅白底浮动窗配色：正分深红、负分深蓝（深色在浅底上清晰可读）。
+                    _floatColor = _floatScore >= 0 ? FloatScorePositive : FloatScoreNegative;
+                }
+                else
+                {
+                    _floatText = infos["score"];
+                    _floatColor = FloatScorePositive;
+                }
+                this.Invoke(new Action(() => UpdateFloatingScore(_floatText, _floatColor, _depthStr)));
                 this.Invoke(new Action(() =>
                 {
                     textBox_engine_log.AppendText(info_str);

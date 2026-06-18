@@ -35,6 +35,48 @@ namespace VinXiangQi
         private const int WM_NCLBUTTONDOWN = 0xA1;
         private const int HT_CAPTION = 0x2;
 
+        // === Layered Window (per-pixel alpha) 相关 P/Invoke ===
+        // 用于浮动分数窗的真半透明：离屏绘制 32bpp ARGB 位图后用 UpdateLayeredWindow 推送，
+        // 使窗体可透出背后的游戏/桌面画面。普通 TransparencyKey 只支持单色 key 抠图，
+        // 无法做半透明渐变和抗锯齿圆角，故必须走 layered window。
+        [DllImport("user32.dll")]
+        static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte alpha, uint dwFlags);
+        [DllImport("user32.dll")]
+        static extern bool UpdateLayeredWindow(IntPtr hWnd, IntPtr hdcDst, ref Point pptDst, ref Size psize,
+            IntPtr hdcSrc, ref Point pptSrc, uint crKey, ref BLENDFUNCTION pblend, uint dwFlags);
+        [DllImport("user32.dll")]
+        static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll")]
+        static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+        [DllImport("gdi32.dll")]
+        static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteObject(IntPtr hObject);
+        [DllImport("gdi32.dll")]
+        static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteDC(IntPtr hdc);
+        [DllImport("user32.dll")]
+        static extern IntPtr GetDC(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        const int GWL_EXSTYLE = -20;
+        const int WS_EX_LAYERED = 0x00080000;
+        const int WS_EX_TRANSPARENT = 0x00000020;
+        const uint ULW_ALPHA = 0x00000002;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct BLENDFUNCTION
+        {
+            public byte BlendOp;      // AC_SRC_OVER = 0
+            public byte BlendFlags;   // 0
+            public byte SourceConstant; // 整体不透明度（与位图 alpha 相乘）
+            public byte AlphaFormat;  // AC_SRC_ALPHA = 1
+        }
+        const byte AC_SRC_OVER = 0;
+        const byte AC_SRC_ALPHA = 1;
+
         private bool _isLargeSize = false;
         private const int SmallW = 225, SmallH = 208;
         private const int LargeW = 450, LargeH = 416;
@@ -134,12 +176,47 @@ namespace VinXiangQi
             public Point To;
         }
 
-        private Label _floatingScoreLabel;
         private Form _floatingScoreForm;
         private System.Windows.Forms.Timer _floatingTopmostTimer;
         private int _floatingClickCount;
         private int _floatingClickZone;
         private System.Windows.Forms.Timer _floatingClickTimer;
+
+        // === 浮动分数窗（半透明白胶囊，真 per-pixel alpha）===
+        // 用 Layered Window (UpdateLayeredWindow + 32bpp ARGB) 实现：窗体可透出背后
+        // 游戏/桌面画面，半透明白底在任何背景上都可见，圆角抗锯齿干净。
+        // 内容变化（分数/深度/hover）时离屏重绘 bitmap 再整体推送，不走 WM_PAINT。
+        const int FloatW = 104, FloatH = 52;
+        const int FloatRadius = 12;
+        // 半透明白胶囊：底色白 alpha≈210（透出约 18% 背景画面，又不至于让文字糊），
+        // 描边深灰，辅助文字中灰。文字用深色，在浅白底上清晰。
+        const int FloatBgAlpha = 210;
+        static readonly Color FloatBg = Color.FromArgb(248, 250, 252);
+        static readonly Color FloatBorder = Color.FromArgb(210, 100, 116, 139);
+        static readonly Color FloatDim = Color.FromArgb(180, 71, 85, 105);
+        static readonly Color FloatHover = Color.FromArgb(60, 59, 130, 246); // hover 蓝色低透
+        // 分数配色（浅白底上）：正分深红、负分深蓝、绝杀深绿，都高对比可读
+        static readonly Color FloatScorePositive = Color.FromArgb(220, 38, 38);
+        static readonly Color FloatScoreNegative = Color.FromArgb(29, 78, 216);
+        static readonly Color FloatScoreMate = Color.FromArgb(21, 128, 61);
+        int _floatHoverZone = -1;
+        string _floatScoreText = "--";
+        Color _floatScoreColor = Color.FromArgb(220, 38, 38);
+        string _floatDepthText = "";
+
+        static System.Drawing.Drawing2D.GraphicsPath BuildRoundedRectPath(Rectangle r, int radius)
+        {
+            var path = new System.Drawing.Drawing2D.GraphicsPath();
+            int d = radius * 2;
+            if (d >= r.Width) d = r.Width;
+            if (d >= r.Height) d = r.Height;
+            path.AddArc(r.X, r.Y, d, d, 180, 90);
+            path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
 
         public void InitFloatingScore()
         {
@@ -150,38 +227,17 @@ namespace VinXiangQi
             {
                 FormBorderStyle = FormBorderStyle.None,
                 StartPosition = FormStartPosition.Manual,
-                Size = new Size(90, 44),
+                Size = new Size(FloatW, FloatH),
                 TopMost = true,
                 ShowInTaskbar = false,
-                BackColor = SystemColors.Control
+                // 背景色对 layered window 不影响显示（由位图决定），设为透明便于调试
+                BackColor = Color.Fuchsia
             };
-            _floatingScoreForm.Paint += (s, e) =>
-            {
-                var g = e.Graphics;
-                int w = _floatingScoreForm.ClientSize.Width;
-                int h = _floatingScoreForm.ClientSize.Height;
-                using (Pen p = new Pen(Color.Green, 2))
-                    g.DrawRectangle(p, 1, 1, w - 2, h - 2);
-                using (Pen d = new Pen(Color.Green, 1))
-                {
-                    d.DashStyle = System.Drawing.Drawing2D.DashStyle.Dot;
-                    g.DrawLine(d, w / 3, 4, w / 3, h - 4);
-                    g.DrawLine(d, w * 2 / 3, 4, w * 2 / 3, h - 4);
-                }
-            };
-
-            _floatingScoreLabel = new Label
-            {
-                Dock = DockStyle.Fill,
-                Font = new Font("Consolas", 20F, FontStyle.Bold),
-                ForeColor = Color.Red,
-                Text = "--",
-                TextAlign = ContentAlignment.MiddleCenter
-            };
-            _floatingScoreLabel.MouseDown += FloatingScore_MouseDown;
             _floatingScoreForm.MouseDown += FloatingScore_MouseDown;
-
-            _floatingScoreForm.Controls.Add(_floatingScoreLabel);
+            _floatingScoreForm.MouseMove += FloatForm_MouseMove;
+            _floatingScoreForm.MouseLeave += FloatForm_MouseLeave;
+            // layered window 的位图通过 ptDst 绑定屏幕坐标，拖动时需重绘跟随新位置
+            _floatingScoreForm.LocationChanged += (s, e) => UpdateFloatLayered();
 
             if (Settings.FloatingScoreX >= 0 && Settings.FloatingScoreY >= 0)
                 _floatingScoreForm.Location = new Point(Settings.FloatingScoreX, Settings.FloatingScoreY);
@@ -189,6 +245,11 @@ namespace VinXiangQi
                 _floatingScoreForm.Shown += (s, e) => { _floatingScoreForm.Location = new Point(this.Right + 4, this.Top); };
 
             _floatingScoreForm.Show(this);
+
+            // 设置 WS_EX_LAYERED，使窗体支持 per-pixel alpha。
+            // 必须在 Show 之后、第一次 UpdateLayeredWindow 之前设置。
+            EnableLayeredWindow(_floatingScoreForm.Handle);
+            UpdateFloatLayered();
             PinFloatingTopmost();
 
             if (_floatingTopmostTimer == null)
@@ -200,12 +261,165 @@ namespace VinXiangQi
             _floatingTopmostTimer.Start();
         }
 
+        static void EnableLayeredWindow(IntPtr hwnd)
+        {
+            int ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+            SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        }
+
+        static int FloatZoneOfX(int x, int width)
+        {
+            return x < width / 3 ? 0 : x < width * 2 / 3 ? 1 : 2;
+        }
+
+        void FloatForm_MouseMove(object sender, MouseEventArgs e)
+        {
+            int zone = FloatZoneOfX(e.X, FloatW);
+            if (zone != _floatHoverZone)
+            {
+                _floatHoverZone = zone;
+                UpdateFloatLayered();
+            }
+            if (_floatingScoreForm != null)
+                _floatingScoreForm.Cursor = Cursors.SizeAll;
+        }
+
+        void FloatForm_MouseLeave(object sender, EventArgs e)
+        {
+            if (_floatHoverZone != -1)
+            {
+                _floatHoverZone = -1;
+                UpdateFloatLayered();
+            }
+        }
+
+        // 离屏绘制浮动窗内容到 32bpp ARGB 位图
+        void RenderFloatToBitmap(Bitmap bmp)
+        {
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                Rectangle bounds = new Rectangle(0, 0, FloatW, FloatH);
+
+                // 圆角路径作为填充与裁剪区，保证圆角外为完全透明（alpha=0）
+                using (var path = BuildRoundedRectPath(bounds, FloatRadius))
+                {
+                    g.SetClip(path);
+                    // 半透明白底
+                    using (var bgBrush = new SolidBrush(Color.FromArgb(FloatBgAlpha, FloatBg)))
+                        g.FillRectangle(bgBrush, bounds);
+
+                    // hover 分区高亮
+                    if (_floatHoverZone >= 0)
+                    {
+                        int zoneW = FloatW / 3;
+                        Rectangle hoverRect = new Rectangle(_floatHoverZone * zoneW, 0, zoneW, FloatH);
+                        using (var hoverBrush = new SolidBrush(FloatHover))
+                            g.FillRectangle(hoverBrush, hoverRect);
+                    }
+                    g.ResetClip();
+
+                    // 圆角描边
+                    using (var borderPen = new Pen(FloatBorder, 1.4f))
+                        g.DrawPath(borderPen, path);
+                }
+
+                // 分数大字（居中偏上）
+                using (var scoreFont = new Font("Consolas", 18F, FontStyle.Bold))
+                using (var scoreBrush = new SolidBrush(_floatScoreColor))
+                {
+                    SizeF sz = g.MeasureString(_floatScoreText, scoreFont);
+                    float sx = (FloatW - sz.Width) / 2f;
+                    g.DrawString(_floatScoreText, scoreFont, scoreBrush, sx, 5);
+                }
+
+                // 深度小字（右上角）
+                if (!string.IsNullOrEmpty(_floatDepthText))
+                {
+                    using (var depthFont = new Font("Consolas", 8.5F))
+                    using (var depthBrush = new SolidBrush(FloatDim))
+                    {
+                        SizeF dsz = g.MeasureString(_floatDepthText, depthFont);
+                        g.DrawString(_floatDepthText, depthFont, depthBrush, FloatW - dsz.Width - 6, 4);
+                    }
+                }
+
+                // 底部优势条
+                if (_floatScoreText != "--")
+                {
+                    int barY = FloatH - 5;
+                    int barH = 3;
+                    int midX = FloatW / 2;
+                    using (var barBrush = new SolidBrush(_floatScoreColor))
+                    {
+                        if (_floatScoreColor == FloatScorePositive)
+                            g.FillRectangle(barBrush, 10, barY, midX - 10, barH);
+                        else if (_floatScoreColor == FloatScoreNegative)
+                            g.FillRectangle(barBrush, midX, barY, FloatW - midX - 10, barH);
+                    }
+                }
+            }
+        }
+
+        // 把 ARGB 位图通过 UpdateLayeredWindow 推送给 layered window，实现真半透明显示
+        void UpdateFloatLayered()
+        {
+            if (_floatingScoreForm == null || _floatingScoreForm.IsDisposed) return;
+            if (!_floatingScoreForm.IsHandleCreated) return;
+
+            IntPtr hwnd = _floatingScoreForm.Handle;
+            using (Bitmap bmp = new Bitmap(FloatW, FloatH, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                RenderFloatToBitmap(bmp);
+                // 锁定像素获取位图位数据，供 SetBitmap 使用
+                var rect = new Rectangle(0, 0, FloatW, FloatH);
+                var bmpData = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly, bmp.PixelFormat);
+                try
+                {
+                    IntPtr hBitmap = IntPtr.Zero;
+                    IntPtr hOld = IntPtr.Zero;
+                    IntPtr hdcScreen = GetDC(IntPtr.Zero);
+                    IntPtr hdcMem = CreateCompatibleDC(hdcScreen);
+                    try
+                    {
+                        // 用 GetHbitmap 得到 GDI 位图句柄供 SelectObject
+                        hBitmap = bmp.GetHbitmap(Color.FromArgb(0));
+                        hOld = SelectObject(hdcMem, hBitmap);
+
+                        Point ptDst = new Point(_floatingScoreForm.Location.X, _floatingScoreForm.Location.Y);
+                        Size sz = new Size(FloatW, FloatH);
+                        Point ptSrc = new Point(0, 0);
+                        BLENDFUNCTION blend = new BLENDFUNCTION
+                        {
+                            BlendOp = AC_SRC_OVER,
+                            BlendFlags = 0,
+                            SourceConstant = 255,         // 整体不透明度由位图自身 alpha 决定
+                            AlphaFormat = AC_SRC_ALPHA
+                        };
+                        UpdateLayeredWindow(hwnd, hdcScreen, ref ptDst, ref sz,
+                            hdcMem, ref ptSrc, 0, ref blend, ULW_ALPHA);
+                    }
+                    finally
+                    {
+                        if (hOld != IntPtr.Zero) SelectObject(hdcMem, hOld);
+                        if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
+                        DeleteDC(hdcMem);
+                        ReleaseDC(IntPtr.Zero, hdcScreen);
+                    }
+                }
+                finally
+                {
+                    bmp.UnlockBits(bmpData);
+                }
+            }
+        }
+
         private void FloatingScore_MouseDown(object sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left) return;
 
-            int w = _floatingScoreForm.ClientSize.Width;
-            int zone = e.X < w / 3 ? 0 : e.X < w * 2 / 3 ? 1 : 2;
+            int zone = FloatZoneOfX(e.X, FloatW);
 
             _floatingClickCount++;
             if (_floatingClickCount == 1)
@@ -258,8 +472,12 @@ namespace VinXiangQi
             {
                 _floatingScoreForm.Close();
                 _floatingScoreForm = null;
-                _floatingScoreLabel = null;
             }
+            // 重置显示状态，下次开启时回到 "--" 初值
+            _floatScoreText = "--";
+            _floatScoreColor = Color.Red;
+            _floatDepthText = "";
+            _floatHoverZone = -1;
         }
 
         // 主界面是无边框紧凑窗体，没有菜单栏。这里构建一个右键菜单挂到棋盘上，
@@ -286,11 +504,13 @@ namespace VinXiangQi
             panel_drag_top.ContextMenuStrip = _boardContextMenu;
         }
 
-        void UpdateFloatingScore(string text, Color color)
+        void UpdateFloatingScore(string text, Color color, string depth = "")
         {
-            if (_floatingScoreLabel == null) return;
-            _floatingScoreLabel.Text = text;
-            _floatingScoreLabel.ForeColor = color;
+            _floatScoreText = text;
+            _floatScoreColor = color;
+            _floatDepthText = depth ?? "";
+            // layered window 不响应 Invalidate/WM_PAINT，必须主动重绘位图并推送
+            UpdateFloatLayered();
         }
 
         private void Mainform_Load(object sender, EventArgs e)
@@ -1208,14 +1428,17 @@ namespace VinXiangQi
                 label_score.Text = Math.Abs(score).ToString();
                 label_score.ForeColor = score >= 0 ? Color.Red : Color.Black;
                 this.Text = display;
-                UpdateFloatingScore(display, score >= 0 ? Color.Red : Color.Black);
+                // 主窗分数标签用红/黑(浅色背景可读)；浮动窗是半透明白底，
+                // 用深红/深蓝与之匹配且在浅底上清晰。
+                Color floatColor = score >= 0 ? FloatScorePositive : FloatScoreNegative;
+                UpdateFloatingScore(display, floatColor, _floatDepthText);
             }
             else
             {
                 label_score.Text = scoreStr;
                 label_score.ForeColor = Color.Red;
                 this.Text = scoreStr;
-                UpdateFloatingScore(scoreStr, Color.Red);
+                UpdateFloatingScore(scoreStr, FloatScorePositive, _floatDepthText);
             }
         }
 
