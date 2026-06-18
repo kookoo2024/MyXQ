@@ -303,12 +303,45 @@ namespace VinXiangQi
             if (File.Exists(SettingsPath))
             {
                 Settings = JsonConvert.DeserializeObject<ProgramSettings>(File.ReadAllText(SettingsPath));
+                // 持久化时引擎路径是相对路径（相对程序基目录），加载后还原为绝对路径
+                // 供 File.Exists / Process.Start 使用，保证后续逻辑无需感知路径形式。
+                if (Settings != null)
+                {
+                    foreach (var engine in Settings.EngineList)
+                    {
+                        engine.Value.ExePath = Utils.ToAbsolutePath(engine.Value.ExePath);
+                    }
+                }
             }
         }
 
         public static void SaveSettings()
         {
-            File.WriteAllText(SettingsPath, JsonConvert.SerializeObject(Settings));
+            // 保存前把引擎路径相对化，避免 settings.json 里出现 D:\... 绝对路径，
+            // 使整个目录可在不同机器间拷贝。转换后立即写盘再还原内存中的绝对路径，
+            // 避免影响正在运行的引擎（运行期 ExePath 始终为绝对路径）。
+            Dictionary<string, string> originalPaths = new Dictionary<string, string>();
+            foreach (var engine in Settings.EngineList)
+            {
+                string rel = Utils.ToRelativePath(engine.Value.ExePath);
+                if (rel != engine.Value.ExePath)
+                {
+                    originalPaths[engine.Key] = engine.Value.ExePath;
+                    engine.Value.ExePath = rel;
+                }
+            }
+            try
+            {
+                File.WriteAllText(SettingsPath, JsonConvert.SerializeObject(Settings));
+            }
+            finally
+            {
+                // 写盘后还原内存中的绝对路径，保持运行期状态不变
+                foreach (var kv in originalPaths)
+                {
+                    Settings.EngineList[kv.Key].ExePath = kv.Value;
+                }
+            }
         }
 
         void InitThreads()

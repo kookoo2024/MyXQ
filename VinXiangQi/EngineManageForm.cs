@@ -37,11 +37,17 @@ namespace VinXiangQi
         {
             if (openFileDialog_engine.ShowDialog() == DialogResult.OK)
             {
+                // 存绝对路径，由 Mainform.SaveSettings 统一相对化
                 string path = openFileDialog_engine.FileName;
-                path = path.Replace(Environment.CurrentDirectory, ".");
                 if (!File.Exists(path))
                 {
                     MessageBox.Show($"{path} 引擎文件不存在！");
+                    return;
+                }
+                // 去重：避免重复添加同一物理引擎
+                if (Mainform.Settings.EngineList.Values.Any(e => string.Equals(e.ExePath, path, StringComparison.OrdinalIgnoreCase)))
+                {
+                    MessageBox.Show("该引擎已存在");
                     return;
                 }
                 EngineSettings settings = new EngineSettings();

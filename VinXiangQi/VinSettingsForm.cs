@@ -86,16 +86,23 @@ namespace VinXiangQi
         {
             if (openFileDialog_engine.ShowDialog() == DialogResult.OK)
             {
+                // 存绝对路径，由 Mainform.SaveSettings 统一相对化（避免 CurrentDirectory 不稳定）
                 string path = openFileDialog_engine.FileName;
-                path = path.Replace(Environment.CurrentDirectory, ".");
-                if (Mainform.Settings.EngineList.ContainsKey(path))
+                if (Mainform.Settings.EngineList.Values.Any(e => string.Equals(e.ExePath, path, StringComparison.OrdinalIgnoreCase)))
                 {
                     MessageBox.Show("该引擎已存在");
                     return;
                 }
                 EngineSettings esettings = new EngineSettings();
                 esettings.ExePath = path;
-                Mainform.Settings.EngineList.Add(path, esettings);
+                // 用引擎文件名作为 key，和 EngineManageForm 保持一致，便于后续按名查找
+                string key = System.IO.Path.GetFileNameWithoutExtension(path);
+                string baseKey = key;
+                for (int i = 1; Mainform.Settings.EngineList.ContainsKey(key); i++)
+                    key = baseKey + "_" + i;
+                esettings.Name = key;
+                Mainform.Settings.EngineList.Add(key, esettings);
+                Mainform.Settings.SelectedEngine = key;
                 Mainform.SaveSettings();
                 LoadSettings();
             }
