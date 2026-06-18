@@ -111,8 +111,11 @@ namespace VinXiangQi
                 {
                     Thread.Sleep(300);
                 }
+                tryCount--;
             }
-            if (OptionList.Count < 0)
+            // 引擎在 30 秒内未返回任何 option（uciok 之前的握手失败），
+            // 视为加载超时。原判断 OptionList.Count < 0 永远为假，属笔误。
+            if (OptionList.Count == 0)
             {
                 throw new Exception("引擎 " + EnginePath + " 加载超时！");
             }

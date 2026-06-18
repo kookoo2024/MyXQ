@@ -43,8 +43,16 @@ namespace VinXiangQi
             InitializeComponent();
         }
 
-        // 程序版本
-        public static string Version = "1.0.0";
+        // 程序版本：统一从程序集版本读取（AssemblyInfo.cs），避免多处硬编码不一致
+        // 显示时取 Major.Minor.Build 三段，与历史格式 "1.0.0" 一致
+        public static string Version
+        {
+            get
+            {
+                var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                return v.Major + "." + v.Minor + "." + v.Build;
+            }
+        }
 
         // 用于截图的窗口句柄
         public static IntPtr GameHandle = IntPtr.Zero;
