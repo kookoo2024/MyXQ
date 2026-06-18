@@ -45,7 +45,7 @@ namespace VinXiangQi
                     return;
                 }
                 // 去重：避免重复添加同一物理引擎
-                if (Mainform.Settings.EngineList.Values.Any(e => string.Equals(e.ExePath, path, StringComparison.OrdinalIgnoreCase)))
+                if (Mainform.Settings.EngineList.Values.Any(eng => string.Equals(eng.ExePath, path, StringComparison.OrdinalIgnoreCase)))
                 {
                     MessageBox.Show("该引擎已存在");
                     return;

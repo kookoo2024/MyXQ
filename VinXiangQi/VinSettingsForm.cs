@@ -88,7 +88,7 @@ namespace VinXiangQi
             {
                 // 存绝对路径，由 Mainform.SaveSettings 统一相对化（避免 CurrentDirectory 不稳定）
                 string path = openFileDialog_engine.FileName;
-                if (Mainform.Settings.EngineList.Values.Any(e => string.Equals(e.ExePath, path, StringComparison.OrdinalIgnoreCase)))
+                if (Mainform.Settings.EngineList.Values.Any(eng => string.Equals(eng.ExePath, path, StringComparison.OrdinalIgnoreCase)))
                 {
                     MessageBox.Show("该引擎已存在");
                     return;

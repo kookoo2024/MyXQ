@@ -262,6 +262,30 @@ namespace VinXiangQi
             }
         }
 
+        // 主界面是无边框紧凑窗体，没有菜单栏。这里构建一个右键菜单挂到棋盘上，
+        // 既给"导出棋谱/关于/引擎管理/开局库管理"提供入口，也复活了原先
+        // 因菜单栏被移除而失效的 ToolStripMenuItem_*_Click 处理器。
+        ContextMenuStrip _boardContextMenu;
+        void InitContextMenu()
+        {
+            _boardContextMenu = new ContextMenuStrip();
+            _boardContextMenu.Items.Add("导出棋谱 (F5)", null, (s, e) => ExportGameRecord());
+            _boardContextMenu.Items.Add("-");
+            _boardContextMenu.Items.Add("开始识别 (F1)", null, (s, e) => StartDetection(false));
+            _boardContextMenu.Items.Add("停止识别 (F3)", null, (s, e) => button_stop_detection_Click(null, null));
+            _boardContextMenu.Items.Add("截图 (F4)", null, (s, e) => button_screenshot_Click(null, null));
+            _boardContextMenu.Items.Add("-");
+            _boardContextMenu.Items.Add("引擎管理", null, (s, e) => ToolStripMenuItem_engine_management_Click(null, null));
+            _boardContextMenu.Items.Add("开局库管理", null, (s, e) => ToolStripMenuItem_openbook_management_Click(null, null));
+            _boardContextMenu.Items.Add("设置", null, (s, e) => button_settings_Click(null, null));
+            _boardContextMenu.Items.Add("-");
+            _boardContextMenu.Items.Add("关于", null, (s, e) => ToolStripMenuItem_about_Click(null, null));
+
+            pictureBox_board.ContextMenuStrip = _boardContextMenu;
+            panel_right.ContextMenuStrip = _boardContextMenu;
+            panel_drag_top.ContextMenuStrip = _boardContextMenu;
+        }
+
         void UpdateFloatingScore(string text, Color color)
         {
             if (_floatingScoreLabel == null) return;
@@ -283,6 +307,7 @@ namespace VinXiangQi
                 InitResultDisplay();
                 InitEngine();
                 InitFloatingScore();
+                InitContextMenu();
                 Settings.BackgroundAnalysis = false;
                 checkBox_auto_go.Checked = Settings.AutoGo;
                 checkBox_two_steps.Checked = ShowTwoSteps;
@@ -840,12 +865,106 @@ namespace VinXiangQi
             }
         }
 
+        // 全局快捷键上次按下状态，用于边沿检测（按下瞬间触发一次，避免长按重复触发）
+        // F2 取句柄沿用原有逻辑（每 Tick 轮询），这里管理 F1/F3/F4/F5
+        static bool _f1Down, _f3Down, _f4Down, _f5Down;
+
+        static bool EdgeTrigger(ref bool prev, Keys key)
+        {
+            // MouseHelper.GetAsyncKeyState 声明为返回 bool（按下即为 true）。
+            // 边沿检测：仅当"本次为按下且上次未按下"时触发一次，避免长按重复。
+            bool now = MouseHelper.GetAsyncKeyState(key);
+            bool triggered = now && !prev;
+            prev = now;
+            return triggered;
+        }
+
+        void HandleHotkeys()
+        {
+            // F1 开始识别（从己方）、F3 停止、F4 截图、F5 导出棋谱
+            // 均为边沿触发：只在按下瞬间响应一次，松开前不会重复
+            try
+            {
+                if (MouseHelper.GetAsyncKeyState(Keys.F2))
+                {
+                    GetHandle();
+                }
+                if (EdgeTrigger(ref _f1Down, Keys.F1))
+                {
+                    StartDetection(false);
+                }
+                if (EdgeTrigger(ref _f3Down, Keys.F3))
+                {
+                    button_stop_detection_Click(null, null);
+                }
+                if (EdgeTrigger(ref _f4Down, Keys.F4))
+                {
+                    button_screenshot_Click(null, null);
+                }
+                if (EdgeTrigger(ref _f5Down, Keys.F5))
+                {
+                    ExportGameRecord();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogHelper.Error(ex, "HandleHotkeys");
+            }
+        }
+
+        /// <summary>
+        /// 导出本局棋谱到 logs 同级的 records 目录。
+        /// 由于历史每步棋盘快照未持久化，这里导出引擎坐标走法序列 + 当前局面 FEN，
+        /// 配合任意象棋软件可复盘。文件名含时间戳，避免覆盖。
+        /// </summary>
+        public void ExportGameRecord()
+        {
+            try
+            {
+                var moves = BestMoveList;
+                if (moves == null || moves.Count == 0)
+                {
+                    MessageBox.Show("当前还没有走法记录，无法导出。");
+                    return;
+                }
+                string dir = @".\records";
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string file = Path.Combine(dir, "棋谱_" + stamp + ".txt");
+
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("Vin象棋 棋谱导出");
+                sb.AppendLine("时间: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                sb.AppendLine("本方: " + (RedSide ? "红方" : "黑方"));
+                sb.AppendLine("总步数: " + moves.Count);
+                sb.AppendLine();
+                sb.AppendLine("[引擎坐标走法（UCI格式，如 h2e2）]");
+                for (int i = 0; i < moves.Count; i++)
+                {
+                    sb.AppendLine((i + 1).ToString("D2") + ". " + moves[i]);
+                }
+                sb.AppendLine();
+                string fen = "";
+                if (CurrentBoard != null)
+                {
+                    fen = Utils.BoardToFen(CurrentBoard, RedSide);
+                }
+                sb.AppendLine("[当前局面 FEN]");
+                sb.AppendLine(string.IsNullOrEmpty(fen) ? "(无)" : fen);
+
+                File.WriteAllText(file, sb.ToString(), Encoding.UTF8);
+                DisplayStatus("已导出棋谱: " + file);
+            }
+            catch (Exception ex)
+            {
+                LogHelper.Error(ex, "ExportGameRecord");
+                MessageBox.Show("导出棋谱失败: " + ex.Message);
+            }
+        }
+
         private void timer_set_window_hwnd_Tick(object sender, EventArgs e)
         {
-            if (MouseHelper.GetAsyncKeyState(Keys.F2))
-            {
-                GetHandle();
-            }
+            HandleHotkeys();
         }
 
         private void pictureBox_board_MouseDown(object sender, MouseEventArgs e)
