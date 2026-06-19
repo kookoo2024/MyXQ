@@ -55,8 +55,9 @@
             // pictureBox_board
             // 
             this.pictureBox_board.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.pictureBox_board.Location = new System.Drawing.Point(2, 3);
-            this.pictureBox_board.Margin = new System.Windows.Forms.Padding(2, 3, 2, 3);
+            this.pictureBox_board.BackColor = System.Drawing.Color.Transparent;
+            this.pictureBox_board.Location = new System.Drawing.Point(0, 0);
+            this.pictureBox_board.Margin = new System.Windows.Forms.Padding(0, 0, 0, 0);
             this.pictureBox_board.Name = "pictureBox_board";
             this.pictureBox_board.Size = new System.Drawing.Size(151, 184);
             this.pictureBox_board.SizeMode = System.Windows.Forms.PictureBoxSizeMode.Zoom;
@@ -79,7 +80,7 @@
             // 
             this.label_score.Anchor = System.Windows.Forms.AnchorStyles.None;
             this.label_score.Font = new System.Drawing.Font("Consolas", 11F, System.Drawing.FontStyle.Bold);
-            this.label_score.ForeColor = System.Drawing.Color.Red;
+            this.label_score.ForeColor = System.Drawing.Color.FromArgb(255, 82, 82);
             this.label_score.Location = new System.Drawing.Point(6, 110);
             this.label_score.Margin = new System.Windows.Forms.Padding(0, 2, 0, 0);
             this.label_score.Name = "label_score";
@@ -93,7 +94,7 @@
             this.label_close.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.label_close.Cursor = System.Windows.Forms.Cursors.Hand;
             this.label_close.Font = new System.Drawing.Font("Marlett", 9F);
-            this.label_close.ForeColor = System.Drawing.Color.IndianRed;
+            this.label_close.ForeColor = System.Drawing.Color.FromArgb(245, 230, 200);
             this.label_close.Location = new System.Drawing.Point(210, 2);
             this.label_close.Margin = new System.Windows.Forms.Padding(2, 0, 2, 0);
             this.label_close.Name = "label_close";
@@ -110,7 +111,7 @@
             this.label_topmost.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.label_topmost.Cursor = System.Windows.Forms.Cursors.Hand;
             this.label_topmost.Font = new System.Drawing.Font("Marlett", 9F);
-            this.label_topmost.ForeColor = System.Drawing.Color.Gray;
+            this.label_topmost.ForeColor = System.Drawing.Color.FromArgb(245, 230, 200);
             this.label_topmost.Location = new System.Drawing.Point(195, 2);
             this.label_topmost.Name = "label_topmost";
             this.label_topmost.Size = new System.Drawing.Size(12, 14);
@@ -126,7 +127,7 @@
             this.label_moves.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.label_moves.Font = new System.Drawing.Font("微软雅黑", 8F);
-            this.label_moves.ForeColor = System.Drawing.Color.Gray;
+            this.label_moves.ForeColor = System.Drawing.Color.FromArgb(201, 169, 110);
             this.label_moves.Location = new System.Drawing.Point(3, 1);
             this.label_moves.Name = "label_moves";
             this.label_moves.Size = new System.Drawing.Size(188, 14);
@@ -143,6 +144,7 @@
             this.panel_drag_top.Location = new System.Drawing.Point(0, 0);
             this.panel_drag_top.Name = "panel_drag_top";
             this.panel_drag_top.Size = new System.Drawing.Size(225, 18);
+            this.panel_drag_top.BackColor = System.Drawing.Color.FromArgb(107, 68, 35);
             this.panel_drag_top.TabIndex = 300;
             this.panel_drag_top.MouseDown += new System.Windows.Forms.MouseEventHandler(this.StartDrag);
             // 
@@ -152,15 +154,16 @@
             this.panel_drag_bottom.Location = new System.Drawing.Point(0, 200);
             this.panel_drag_bottom.Name = "panel_drag_bottom";
             this.panel_drag_bottom.Size = new System.Drawing.Size(225, 8);
+            this.panel_drag_bottom.BackColor = System.Drawing.Color.FromArgb(107, 68, 35);
             this.panel_drag_bottom.TabIndex = 301;
             this.panel_drag_bottom.MouseDown += new System.Windows.Forms.MouseEventHandler(this.StartDrag);
             // 
             // button_start
             // 
             this.button_start.Anchor = System.Windows.Forms.AnchorStyles.None;
-            this.button_start.BackColor = System.Drawing.SystemColors.ActiveCaption;
+            this.button_start.BackColor = System.Drawing.Color.FromArgb(192, 57, 43);
             this.button_start.Font = new System.Drawing.Font("微软雅黑", 9F);
-            this.button_start.ForeColor = System.Drawing.SystemColors.MenuHighlight;
+            this.button_start.ForeColor = System.Drawing.Color.White;
             this.button_start.Location = new System.Drawing.Point(0, 157);
             this.button_start.Margin = new System.Windows.Forms.Padding(0, 2, 0, 0);
             this.button_start.Name = "button_start";
@@ -174,40 +177,43 @@
             // 
             this.button_stop_detection.Anchor = System.Windows.Forms.AnchorStyles.None;
             this.button_stop_detection.Font = new System.Drawing.Font("微软雅黑", 9F);
-            this.button_stop_detection.ForeColor = System.Drawing.SystemColors.HotTrack;
+            this.button_stop_detection.ForeColor = System.Drawing.Color.FromArgb(58, 36, 18);
+            this.button_stop_detection.BackColor = System.Drawing.Color.FromArgb(212, 165, 116);
+            this.button_stop_detection.UseVisualStyleBackColor = false;
             this.button_stop_detection.Location = new System.Drawing.Point(8, 136);
             this.button_stop_detection.Margin = new System.Windows.Forms.Padding(0, 2, 0, 0);
             this.button_stop_detection.Name = "button_stop_detection";
             this.button_stop_detection.Size = new System.Drawing.Size(46, 24);
             this.button_stop_detection.TabIndex = 11;
             this.button_stop_detection.Text = "END";
-            this.button_stop_detection.UseVisualStyleBackColor = true;
             this.button_stop_detection.Click += new System.EventHandler(this.button_stop_detection_Click);
             // 
             // button_settings
             // 
             this.button_settings.Anchor = System.Windows.Forms.AnchorStyles.None;
             this.button_settings.Font = new System.Drawing.Font("微软雅黑", 9F);
+            this.button_settings.ForeColor = System.Drawing.Color.FromArgb(58, 36, 18);
+            this.button_settings.BackColor = System.Drawing.Color.FromArgb(212, 165, 116);
             this.button_settings.Location = new System.Drawing.Point(5, 58);
             this.button_settings.Margin = new System.Windows.Forms.Padding(0, 2, 0, 0);
             this.button_settings.Name = "button_settings";
             this.button_settings.Size = new System.Drawing.Size(46, 24);
             this.button_settings.TabIndex = 13;
             this.button_settings.Text = "设置";
-            this.button_settings.UseVisualStyleBackColor = true;
             this.button_settings.Click += new System.EventHandler(this.button_settings_Click);
             // 
             // button_size
             // 
             this.button_size.Anchor = System.Windows.Forms.AnchorStyles.None;
             this.button_size.Font = new System.Drawing.Font("微软雅黑", 9F);
+            this.button_size.ForeColor = System.Drawing.Color.FromArgb(58, 36, 18);
+            this.button_size.BackColor = System.Drawing.Color.FromArgb(212, 165, 116);
             this.button_size.Location = new System.Drawing.Point(6, 84);
             this.button_size.Margin = new System.Windows.Forms.Padding(0, 2, 0, 0);
             this.button_size.Name = "button_size";
             this.button_size.Size = new System.Drawing.Size(42, 24);
             this.button_size.TabIndex = 14;
             this.button_size.Text = "大小";
-            this.button_size.UseVisualStyleBackColor = true;
             this.button_size.Click += new System.EventHandler(this.button_size_Click);
             // 
             // checkBox_auto_go
@@ -251,8 +257,9 @@
             this.panel_right.Location = new System.Drawing.Point(157, 3);
             this.panel_right.Margin = new System.Windows.Forms.Padding(2, 3, 2, 3);
             this.panel_right.Name = "panel_right";
-            this.panel_right.Padding = new System.Windows.Forms.Padding(15, 3, 15, 3);
+            this.panel_right.Padding = new System.Windows.Forms.Padding(6, 3, 6, 3);
             this.panel_right.Size = new System.Drawing.Size(66, 184);
+            this.panel_right.BackColor = System.Drawing.Color.FromArgb(139, 94, 60);
             this.panel_right.TabIndex = 0;
             // 
             // pictureBox_show_result
@@ -307,6 +314,7 @@
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+            this.BackColor = System.Drawing.Color.FromArgb(107, 68, 35);
             this.ClientSize = new System.Drawing.Size(225, 208);
             this.Controls.Add(this.panel_drag_bottom);
             this.Controls.Add(this.tableLayoutPanel_content);
@@ -320,6 +328,7 @@
             this.Text = "VIN 象棋";
             this.FormClosing += new System.Windows.Forms.FormClosingEventHandler(this.Mainform_FormClosing);
             this.Load += new System.EventHandler(this.Mainform_Load);
+            this.Shown += new System.EventHandler(this.Mainform_Shown);
             ((System.ComponentModel.ISupportInitialize)(this.pictureBox_board)).EndInit();
             this.panel_right.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)(this.pictureBox_show_result)).EndInit();

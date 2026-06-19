@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.IO;
 using Yolov5Net.Scorer;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -585,6 +586,72 @@ namespace VinXiangQi
         public static Rectangle RestoreArea(Rectangle cropArea, Rectangle boardArea)
         {
             return new Rectangle(cropArea.X + boardArea.X, cropArea.Y + boardArea.Y, boardArea.Width, boardArea.Height);
+        }
+
+        // === 引擎/资源路径相对化工具 ===
+        // 目的：settings.json 里持久化的引擎路径尽可能用相对路径（相对程序基目录），
+        // 这样把整个目录拷贝到别的机器上引擎仍可用，不再出现 D:\下载仓库\... 这种绝对路径。
+        // 加载时再还原为绝对路径供 File.Exists / Process.Start 使用。
+        // 已是相对路径或不在基目录下的路径原样返回，保证向后兼容。
+
+        /// <summary>
+        /// 程序基目录（以目录分隔符结尾），作为相对路径的根。
+        /// 用 BaseDirectory 而非 CurrentDirectory，后者会随用户从不同位置启动而变化。
+        /// </summary>
+        static readonly string AppBaseDir = AppDomain.CurrentDomain.BaseDirectory;
+
+        /// <summary>
+        /// 把绝对路径转成相对程序基目录的相对路径（若可行）。
+        /// </summary>
+        public static string ToRelativePath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return path;
+            // 已经是相对路径，不动它
+            if (!Path.IsPathRooted(path)) return NormalizeRelative(path);
+            try
+            {
+                string baseDir = AppBaseDir;
+                if (!baseDir.EndsWith(Path.DirectorySeparatorChar.ToString()))
+                    baseDir += Path.DirectorySeparatorChar;
+                Uri baseUri = new Uri(baseDir);
+                Uri pathUri = new Uri(path);
+                if (baseUri.Scheme == pathUri.Scheme && baseUri.Host == pathUri.Host)
+                {
+                    Uri rel = baseUri.MakeRelativeUri(pathUri);
+                    string relStr = Uri.UnescapeDataString(rel.ToString());
+                    // Uri 用正斜杠，统一回平台分隔符
+                    relStr = relStr.Replace('/', Path.DirectorySeparatorChar);
+                    if (!string.IsNullOrEmpty(relStr)) return relStr;
+                }
+            }
+            catch
+            {
+                // 转换失败则保留原绝对路径，不影响可用性
+            }
+            return path;
+        }
+
+        /// <summary>
+        /// 把相对程序基目录的相对路径还原为绝对路径。已是绝对路径则原样返回。
+        /// </summary>
+        public static string ToAbsolutePath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return path;
+            if (Path.IsPathRooted(path)) return path;
+            // 兼容历史 settings 里 ".\xxx" / "./xxx" 写法
+            string cleaned = NormalizeRelative(path);
+            return Path.GetFullPath(Path.Combine(AppBaseDir, cleaned));
+        }
+
+        /// <summary>把 ".\" 前缀和正斜杠统一为平台规范。</summary>
+        static string NormalizeRelative(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return path;
+            if (path == ".") return "";
+            string p = path.Replace('/', Path.DirectorySeparatorChar);
+            if (p.StartsWith("." + Path.DirectorySeparatorChar))
+                p = p.Substring(2);
+            return p;
         }
     }
 }

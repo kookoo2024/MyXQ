@@ -71,6 +71,25 @@ namespace VinXiangQi
             Engine
         }
 
+        // 自动续盘循环：截图 → 模板匹配 → 命中则点击。
+        // 与 DetectionLoop / 引擎进程是独立线程，互不影响运算速度。
+        // 修复多图标场景失效：
+        //   1) 命中即 break，下一轮用全新截图再找下一个按钮（旧代码命中后仍用旧截图
+        //      继续匹配列表里的图，导致界面已变化时第二个图标识别不到）；
+        //   2) 命中后进入 cooldown，等界面动画/弹窗切换稳定再继续；
+        //   3) 放宽匹配阈值到 AutoClickThreshold，缓解渲染差异（缩放/抗锯齿/阴影）；
+        //   4) 每轮截图用完即释放，避免全屏 Bitmap 内存泄漏。
+        const int AutoClickThreshold = 80;
+        const int AutoClickCooldownMs = 1500;
+        const int AutoClickIntervalMs = 2000;
+        // 同一位置的去重窗口：模板图在下棋界面可能误匹配到某固定区域，
+        // 限制同一坐标在窗口内只点一次，避免反复误点打断对局；
+        // 局间按钮被点掉后界面变化，下一轮是不同坐标或按钮消失，不受影响。
+        const int AutoClickDedupMs = 15000;
+        const int AutoClickDedupTolerance = 10; // 坐标偏差小于此值视为同一位置
+        Point _lastAutoClickPos = new Point(-1, -1);
+        DateTime _lastAutoClickTime = DateTime.MinValue;
+
         void AutoClickLoop()
         {
             while (Running)
@@ -82,23 +101,55 @@ namespace VinXiangQi
                         Thread.Sleep(500);
                         continue;
                     }
+                    bool clicked = false;
                     Bitmap screen = Screenshot();
-                    foreach (Bitmap image in AutoClickImageList.ToArray())
+                    try
                     {
-                        Point pos = ImageHelper.FindImageFromTop(screen, image);
-                        if (pos.X != -1)
+                        // 按"面积升序"匹配：上层小弹窗（如"×"关闭按钮，面积小）优先于
+                        // 底层大弹窗（如"再来一局"，面积大）。否则会因命中即 break，
+                        // 永远先点到大弹窗，而该优先处理的小弹窗被跳过，导致死循环卡住。
+                        var orderedImages = AutoClickImageList
+                            .OrderBy(img => img.Width * img.Height)
+                            .ToArray();
+                        foreach (Bitmap image in orderedImages)
                         {
-                            Point clickPos = new Point(pos.X + image.Width / 2, pos.Y + image.Height / 2);
-                            MouseLeftClick(clickPos.X, clickPos.Y);
-                            Thread.Sleep(1000);
+                            Point pos = ImageHelper.FindImageFromTop(screen, image, AutoClickThreshold);
+                            if (pos.X != -1)
+                            {
+                                Point clickPos = new Point(pos.X + image.Width / 2, pos.Y + image.Height / 2);
+                                // 去重：同一位置在去重窗口内不重复点击。
+                                // 抑制下棋时模板误匹配导致的反复误点；局间按钮点掉后坐标变化，不受影响。
+                                bool isDuplicate = _lastAutoClickPos.X != -1
+                                    && Math.Abs(clickPos.X - _lastAutoClickPos.X) <= AutoClickDedupTolerance
+                                    && Math.Abs(clickPos.Y - _lastAutoClickPos.Y) <= AutoClickDedupTolerance
+                                    && (DateTime.Now - _lastAutoClickTime).TotalMilliseconds < AutoClickDedupMs;
+                                if (isDuplicate)
+                                {
+                                    LogHelper.Info("[AutoClickLoop] 命中但去重跳过(同位置短期内已点) " + image.Width + "x" + image.Height
+                                        + " @px" + clickPos.X + "," + clickPos.Y);
+                                    break;
+                                }
+                                MouseLeftClick(clickPos.X, clickPos.Y);
+                                _lastAutoClickPos = clickPos;
+                                _lastAutoClickTime = DateTime.Now;
+                                LogHelper.Info("[AutoClickLoop] 命中并点击 " + image.Width + "x" + image.Height
+                                    + " @px" + clickPos.X + "," + clickPos.Y);
+                                clicked = true;
+                                break; // 用全新截图找下一个，避免在旧截图上误判
+                            }
                         }
                     }
+                    finally
+                    {
+                        screen.Dispose();
+                    }
+                    // 命中后等界面稳定再进入下一轮；未命中则按常规节拍继续
+                    Thread.Sleep(clicked ? AutoClickCooldownMs : AutoClickIntervalMs);
                 }
                 catch(Exception ex)
                 {
                     LogHelper.Error(ex, "AutoClickLoop");
                 }
-                Thread.Sleep(2000);
             }
         }
 
@@ -285,18 +336,70 @@ namespace VinXiangQi
             return result;
         }
 
+        // 棋盘背景图裁剪缓存：board.png 四周带一圈不透明白边(四角为纯白 R=G=B=255)，
+        // 直接画会把 Clear 的木色底盖掉，形成难看的白圈。这里首次使用时扫描出非白内容的
+        // 边界矩形，克隆出裁掉白边的版本缓存，之后绘制直接用裁剪版，白圈消失。
+        // 用动态扫描而非硬编码边距，换图时自适应。
+        static Bitmap _boardImageTrimmed;
+        static Bitmap GetTrimmedBoardImage()
+        {
+            if (_boardImageTrimmed != null) return _boardImageTrimmed;
+            Bitmap src = Properties.Resources.board;
+            if (src == null) return null;
+            int w = src.Width, h = src.Height;
+            int minX = w, minY = h, maxX = 0, maxY = 0;
+            // 步长4快速扫描边界(棋盘内容区域大，粗扫足够定位白边)
+            for (int x = 0; x < w; x += 4)
+            {
+                for (int y = 0; y < h; y += 4)
+                {
+                    Color c = src.GetPixel(x, y);
+                    // 非纯白即视为内容(阈值248容忍极浅木色边缘)
+                    if (c.R < 248 || c.G < 248 || c.B < 248)
+                    {
+                        if (x < minX) minX = x;
+                        if (y < minY) minY = y;
+                        if (x > maxX) maxX = x;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+            }
+            // 扫描边界向内收2像素保险(粗扫可能落在边界像素上)，并夹紧到合法范围
+            minX = Math.Max(0, minX - 0);
+            minY = Math.Max(0, minY - 0);
+            maxX = Math.Min(w - 1, maxX);
+            maxY = Math.Min(h - 1, maxY);
+            if (maxX <= minX || maxY <= minY)
+            {
+                _boardImageTrimmed = src; // 退化：扫描失败则用原图
+                return _boardImageTrimmed;
+            }
+            var rect = new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+            _boardImageTrimmed = src.Clone(rect, src.PixelFormat);
+            return _boardImageTrimmed;
+        }
+
         public void RenderDisplayBoard(string[,] renderBoard=null)
         {
             if (renderBoard == null) renderBoard = CurrentBoard;
             if (renderBoard == null) return;
+            // 程序关闭过程中可能被引擎后台线程触发，避免对已释放窗体 Invoke 导致崩溃
+            if (IsDisposed || !IsHandleCreated) return;
             this.Invoke(new Action(() =>
             {
                 int width = 40;
                 int height = 40;
                 int xoffset = width / 2;
                 int yoffset = height / 2;
-                BoardGDI.Clear(Color.White);
-                BoardGDI.DrawImage(Properties.Resources.board, 0, 0, width * 10, height * 11);
+                // 用木色底代替白底：board.png 未铺满时露边，木色与棋盘浑然一体。
+                // 关键：用裁掉白边的棋盘图(GetTrimmedBoardImage)，board.png 原图四周带
+                // 不透明白边，直接画会把木色底盖掉形成白圈。裁剪后内容区画满，白圈消失。
+                BoardGDI.Clear(WoodBg);
+                Bitmap boardImg = GetTrimmedBoardImage();
+                if (boardImg != null)
+                {
+                    BoardGDI.DrawImage(boardImg, 0, 0, width * 10, height * 11);
+                }
                 for (int y = 0; y < 10; y++)
                 {
                     for (int x = 0; x < 9; x++)
@@ -358,7 +461,9 @@ namespace VinXiangQi
                 {
                     float ratio = Math.Min(absScore / 3000f, 1.0f);
                     int offset = (int)(midX * ratio);
-                    bool redAdvantage = label_score.ForeColor == Color.Red;
+                    // 用分数正负判断优势方，不依赖 label_score.ForeColor
+                    // (换肤后 ForeColor 是 WoodScoreRed 而非纯 Color.Red，原判断会恒为 false)
+                    bool redAdvantage = label_score.ForeColor == WoodScoreRed;
                     if (redAdvantage)
                         BoardGDI.FillRectangle(Brushes.Red, midX, barY, offset, barH);
                     else
@@ -381,6 +486,12 @@ namespace VinXiangQi
         bool CheckNewBoard()
         {
             var cmpResult = Utils.CompareBoard(LastBoard, PendingBoard);
+            // [诊断] 只在 DiffCount > 0 时记录，避免刷屏
+            if (cmpResult.DiffCount > 0)
+            {
+                LogHelper.Info("[CheckNewBoard] Diff=" + cmpResult.DiffCount + " Stable=" + StableDetectionCount
+                    + " ConfirmN=" + Settings.DetectionConfirmCount + " ChangeDetected=" + ChangeDetectedAfterClick);
+            }
             if (cmpResult.DiffCount > 0)
             {
                 if (ChangeDetectedAfterClick == false)
@@ -426,8 +537,12 @@ namespace VinXiangQi
             {
                 DisplayStatus("棋盘未改变");
                 StableDetectionCount = 0;
-                // 处理可能未完成的点击，允许多点2次
-                if (Settings.AutoGo && !ChangeDetectedAfterClick)
+                // 处理可能未完成的点击，允许多点2次。
+                // 关键守卫：只有当 ExpectedMove 起点的本方棋子【仍在 PendingBoard 原位】时，
+                // 才说明点击真的没生效，可以重试。若起点棋子已不在原位，说明点击其实已生效
+                // (棋子已移走)，只是当前帧棋盘变化未被确认——此时绝不能重试，否则会在对方
+                // 思考时反复点击本方棋子。
+                if (Settings.AutoGo && !ChangeDetectedAfterClick && IsExpectedMoveStillPending())
                 {
                     AutoGoFailingCheckCount++;
                     if (AutoGoFailingCheckCount >= 5)
@@ -437,15 +552,44 @@ namespace VinXiangQi
                             AutoGoFailingCheckCount = 0;
                             ClickRetryCount++;
                             DisplayStatus("检测到可能的落子失败，重试");
+                            LogHelper.Info("[CheckNewBoard] 落子失败重试 retryCount=" + ClickRetryCount + " move=" + ExpectedMove);
                             PlayChess(ExpectedMove);
                         }
                         else
                         {
                             ClickRetryCount = 0;
+                            ExpectedMove = ""; // 放弃重试，清空预期着法，避免后续误触发
                             ResetDetection();
                         }
                     }
                 }
+                else if (Settings.AutoGo && !ChangeDetectedAfterClick && !IsExpectedMoveStillPending())
+                {
+                    // 起点棋子已不在原位 → 点击已生效，只是变化未被确认。
+                    // 停止重试计数，等待识别跟上；不清 ExpectedMove(ReloadBoard 确认后会清)。
+                    AutoGoFailingCheckCount = 0;
+                }
+                return false;
+            }
+        }
+
+        // 判断 ExpectedMove(上一手本方着法)的起点棋子是否仍停留在 PendingBoard 原位。
+        // 用于区分"点击真没生效"(棋子还在，应重试) 与 "点击生效但未确认"(棋子已走，勿重试)。
+        // ExpectedMove 为空或格式不合法时返回 false，保守地不触发重试。
+        bool IsExpectedMoveStillPending()
+        {
+            if (string.IsNullOrEmpty(ExpectedMove) || ExpectedMove.Length != 4) return false;
+            try
+            {
+                Point from = Utils.Move2Point(ExpectedMove.Substring(0, 2), RedSide);
+                if (from.X < 0 || from.X > 8 || from.Y < 0 || from.Y > 9) return false;
+                string piece = PendingBoard[from.X, from.Y];
+                if (string.IsNullOrEmpty(piece)) return false; // 起点已空 → 已走
+                string myPrefix = RedSide ? "r_" : "b_";
+                return piece.StartsWith(myPrefix); // 起点仍是本方棋子 → 还在原位
+            }
+            catch
+            {
                 return false;
             }
         }
@@ -637,6 +781,7 @@ namespace VinXiangQi
 
         async void StartAnalyze(string fen)
         {
+            LogHelper.Info("[StartAnalyze] 入口 fen=" + fen + " AutoGo=" + Settings.AutoGo + " EngineInit=" + (Engine != null && Engine.Initialized));
             CandidateMoves = new string[3] { "", "", "" };
             CandidateScores = new int[3] { 0, 0, 0 };
             this.Invoke(new Action(() => { label_moves.Text = ""; }));
@@ -644,16 +789,37 @@ namespace VinXiangQi
             {
               try
               {
-                if (BestMoveList.Count >= 6)
+                // 长打(长将/长捉)检测。
+                // BestMoveList 只记录本方着法(每次决策在 ReceiveBestMove 里 Add 一次)，故入口处
+                // List[-1] 即"上一步本方刚走的着法"。中国象棋 3 次重复局面即判负，因此第 3 次
+                // 准备走同一招时就该干预——原阈值 Count>=6 要等走到第 7 次才管，是"超过四次还
+                // 在重复"的直接原因。
+                // - List[-1]==List[-2]：连续两步走同一招(如车一直将军，单招长将)
+                // - List[-1]==List[-3]：交替重复(如 h2e2→h2h8→h2e2，换一种将军法继续长将)
+                // 两种都判定为重复，本次禁掉 List[-1] 这一招，迫使引擎变招。
+                // 注意：只禁单招(Engine.BanMoves = lastMove)。多招 banmoves(a b c)很多引擎
+                // 不认，且禁招过多时引擎会返回 bestmove (none)→ ReceiveBestMove 因长度!=4
+                // 直接 return 不点击，程序卡死停住。单招禁招所有引擎都兼容。
+                bool repetitionDetected = false;
+                if (BestMoveList.Count >= 2)
                 {
-                    if (BestMoveList[BestMoveList.Count-2] == BestMoveList[BestMoveList.Count - 4] && 
-                    BestMoveList[BestMoveList.Count - 4] == BestMoveList[BestMoveList.Count - 6])
+                    string lastMove = BestMoveList[BestMoveList.Count - 1];
+                    bool isRepeat = lastMove == BestMoveList[BestMoveList.Count - 2];
+                    if (!isRepeat && BestMoveList.Count >= 3)
                     {
-                        Engine.BanMoves = BestMoveList[BestMoveList.Count - 2];
-                        DisplayStatus("禁止长打，禁止走法: " + Engine.BanMoves);
+                        isRepeat = lastMove == BestMoveList[BestMoveList.Count - 3];
+                    }
+                    if (isRepeat)
+                    {
+                        Engine.BanMoves = lastMove;
+                        repetitionDetected = true;
+                        DisplayStatus("检测到长打，禁招: " + lastMove + " 迫使变招");
+                        LogHelper.Info("[StartAnalyze] 检测到长打，禁招: " + lastMove);
                     }
                 }
-                if (Settings.UseOpenBook)
+                // 长打时必须走引擎：开局库/云库命中后会直接 return，根本不会发 banmoves，
+                // 禁招永远不生效。故 repetitionDetected=true 时跳过这两条路径，强制走引擎。
+                if (!repetitionDetected && Settings.UseOpenBook)
                 {
                     try
                     {
@@ -713,7 +879,7 @@ namespace VinXiangQi
                         }));
                     }
                 }
-                if (Settings.UseChessDB)
+                if (!repetitionDetected && Settings.UseChessDB)
                 {
                     try
                     {
@@ -777,7 +943,31 @@ namespace VinXiangQi
             if (CurrentBoard == null) return;
             var compareWithLast = Utils.CompareBoard(LastBoard, CurrentBoard);
             var compareWithExpected = Utils.CompareBoard(ExpectedSelfGoBoard, CurrentBoard);
+            // [诊断] 再来一盘后观察 ReloadBoard 走向：LastBoard 是否为 null、变化数、TurnToOpponent、AnalyzingMode
+            LogHelper.Info("[ReloadBoard] LastNull=" + (LastBoard == null) + " ExpNull=" + (ExpectedSelfGoBoard == null)
+                + " Diff=" + compareWithLast.DiffCount + " ExpDiff=" + compareWithExpected.DiffCount
+                + " RedDiff=" + compareWithLast.RedDiff + " BlackDiff=" + compareWithLast.BlackDiff
+                + " TurnToOppo=" + TurnToOpponent + " Analyzing=" + Settings.AnalyzingMode + " RedSide=" + RedSide);
             if (compareWithLast.DiffCount == 0) return;
+            // [修复] 识别"新一局开局"：棋子只会越下越少（被吃），任一方棋子数变多
+            // (RedDiff<0 或 BlackDiff<0，即上一局棋子数 < 当前) 只可能发生在"再来一盘"
+            // 后从残局跳回开局。原代码动画检测只判断 >1，棋子变多的负数差值绕过了保护。
+            // 这里只清掉上一局残留的预期态（避免被"和预期一样"误判跳过），
+            // 然后放行到下方正常的分析路径——开局是稳定合法局面，本方该走，应当直接计算并落子。
+            // 注意：不能把 LastBoard 设成新棋盘后 return，否则下一轮 PendingBoard==LastBoard
+            // 会判定 DiffCount==0"棋盘未改变"，永久卡死不再分析。
+            if (LastBoard != null && (compareWithLast.RedDiff < 0 || compareWithLast.BlackDiff < 0))
+            {
+                LogHelper.Info("[ReloadBoard] 检测到新局(棋子变多 R=" + compareWithLast.RedDiff + " B=" + compareWithLast.BlackDiff + ")，清理上局残留态后正常分析");
+                DisplayStatus("检测到新一局，开始计算");
+                InvalidCount = 0;
+                ExpectedSelfGoBoard = null;
+                ExpectedMove = "";
+                ExpectedBoardMap.Clear();
+                // 新局清空：上一局的走法序列在新局无意义，不清会导致新局第一手就被
+                // 误判为"重复"触发禁招，同时修复棋谱导出跨局污染的问题。
+                BestMoveList.Clear();
+            }
             string opponentSymbol =RedSide ? "b_" : "r_";
             string mySymbol = RedSide ? "r_" : "b_";
             Debug.WriteLine($"Diff Result: {compareWithLast.DiffCount} R: {compareWithLast.RedDiff} B: {compareWithLast.BlackDiff}");
@@ -796,11 +986,13 @@ namespace VinXiangQi
                 ExpectedMove = "";
                 RenderDisplayBoard();
                 DisplayStatus("从对手开始，跳过当前局面");
+                LogHelper.Info("[ReloadBoard] 分支: 从对手开始，跳过当前局面");
                 return;
             }
             if (compareWithLast.BlackDiff > 1 || compareWithLast.RedDiff > 1)
             {
                 InvalidCount++;
+                LogHelper.Info("[ReloadBoard] 分支: 动画中(黑红差>1) InvalidCount=" + InvalidCount);
                 DisplayStatus($"棋盘变化数异常: 黑棋消失: {compareWithLast.BlackDiff} 红棋消失:{compareWithLast.RedDiff} 判断为动画中，跳过 | 错误次数: {InvalidCount}");
                 if (InvalidCount > 2)
                 {
@@ -812,6 +1004,7 @@ namespace VinXiangQi
             if (compareWithLast.DiffCount != 2 && compareWithExpected.DiffCount != 2 && compareWithLast.DiffCount < 10)
             {
                 InvalidCount++;
+                LogHelper.Info("[ReloadBoard] 分支: 变化数异常(动画) Diff=" + compareWithLast.DiffCount + " InvalidCount=" + InvalidCount);
                 DisplayStatus($"棋盘变化数异常: {compareWithLast.DiffCount} 判断为动画中，跳过 | 错误次数: {InvalidCount}");
                 if (InvalidCount > 2)
                 {
@@ -835,12 +1028,14 @@ namespace VinXiangQi
                         EngineAnalyzingBoard = (string[,])CurrentBoard.Clone();
                         Engine.StopAnalyze();
                         StartAnalyze(oppofen);
+                        LogHelper.Info("[ReloadBoard] 分支: 己方棋子变化(分析模式) fen=" + oppofen);
                     }
                     else
                     {
                         InvalidCount = 0;
                         LastBoard = (string[,])CurrentBoard.Clone();
                         DisplayStatus("己方棋子变化，跳过分析");
+                        LogHelper.Info("[ReloadBoard] 分支: 己方棋子变化，跳过分析(非分析模式)");
                         ExpectedMove = "";
                     }
                     return;
@@ -856,15 +1051,18 @@ namespace VinXiangQi
                 ExpectedMove = "";
                 RenderDisplayBoard();
                 DisplayStatus("和预期棋盘一样，跳过");
+                LogHelper.Info("[ReloadBoard] 分支: 和预期棋盘一样，跳过");
                 return;
             }
             if ((compareWithLast.BlackDiff > 1 || compareWithLast.RedDiff > 1) && compareWithLast.DiffCount < 10)
             {
                 InvalidCount++;
                 DisplayStatus($"差别过大，可能有动画，跳过 | 错误次数: {InvalidCount}");
+                LogHelper.Info("[ReloadBoard] 分支: 差别过大可能有动画 InvalidCount=" + InvalidCount);
                 if (InvalidCount > 2)
                 {
                     DisplayStatus("错误次数过多，自动重置");
+                    LogHelper.Info("[ReloadBoard] 错误次数过多 → ResetDetection");
                     ResetDetection();
                 }
                 return;
@@ -873,6 +1071,7 @@ namespace VinXiangQi
             InvalidCount = 0;
             EngineAnalyzeCount++;
             LastBoard = (string[,])CurrentBoard.Clone();
+            LogHelper.Info("[ReloadBoard] 分支: 进入正常分析路径(走到这里才会触发引擎)");
 
             if (Settings.AnalyzingMode)
             {
@@ -919,6 +1118,10 @@ namespace VinXiangQi
 
         private void Engine_InfoEvent(string cmd, Dictionary<string, string> infos)
         {
+            // 引擎在后台线程持续输出 info，程序关闭时引擎可能仍在输出，
+            // 此时 this.Invoke 会抛 ObjectDisposedException(无法访问已释放的 Mainform)。
+            // 窗体已释放或句柄未创建时直接放弃这次更新，绝不让回调把主程序搞崩。
+            if (IsDisposed || !IsHandleCreated) return;
 
             string info_str = "";
             if (infos.ContainsKey("score"))
@@ -996,6 +1199,37 @@ namespace VinXiangQi
                     $"nps: {(infos.ContainsKey("nps") ? Math.Round(double.Parse(infos["nps"]) / 1000) : 0)}K" +
                     "\r\n"
                     );
+                // 同步更新浮动分数窗：分数 + 深度，使其与日志同源且实时
+                // 在后台线程触发，必须封送到 UI 线程更新绘制
+                string _depthStr = "";
+                if (infos.ContainsKey("depth"))
+                {
+                    double dd;
+                    if (double.TryParse(infos["depth"], out dd))
+                        _depthStr = "D" + ((int)dd).ToString();
+                    else
+                        _depthStr = infos["depth"];
+                }
+                int _floatScore;
+                Color _floatColor;
+                string _floatText;
+                if (infos["score"].Contains("绝杀"))
+                {
+                    _floatText = "杀";
+                    _floatColor = FloatScoreMate;
+                }
+                else if (int.TryParse(infos["score"], out _floatScore))
+                {
+                    _floatText = (_floatScore >= 0 ? "+" : "-") + Math.Abs(_floatScore).ToString();
+                    // 浅白底浮动窗配色：正分深红、负分深蓝（深色在浅底上清晰可读）。
+                    _floatColor = _floatScore >= 0 ? FloatScorePositive : FloatScoreNegative;
+                }
+                else
+                {
+                    _floatText = infos["score"];
+                    _floatColor = FloatScorePositive;
+                }
+                this.Invoke(new Action(() => UpdateFloatingScore(_floatText, _floatColor, _depthStr)));
                 this.Invoke(new Action(() =>
                 {
                     textBox_engine_log.AppendText(info_str);
@@ -1141,6 +1375,7 @@ namespace VinXiangQi
 
         void ReceiveBestMove(string bestMove, string ponderMove, ResultSource source, string sourceFen="")
         {
+            LogHelper.Info("[ReceiveBestMove] 收到着法 bestMove=" + bestMove + " ponder=" + ponderMove + " source=" + source + " AutoGo=" + Settings.AutoGo);
             if (source == ResultSource.Engine)
             {
                 FirstMate = true;
@@ -1207,6 +1442,7 @@ namespace VinXiangQi
 
             if (Settings.AutoGo && EngineAnalyzingBoard[fromPoint.X, fromPoint.Y] != null && EngineAnalyzingBoard[fromPoint.X, fromPoint.Y].StartsWith(mySideStr + "_"))
             {
+                LogHelper.Info("[ReceiveBestMove] 通过AutoGo守卫，执行点击 bestMove=" + bestMove + " source=" + source);
                 if (source == ResultSource.ChessDB || source == ResultSource.Openbook)
                 {
                     if (Settings.MinTimeUsingOpenbook > 0)
@@ -1238,7 +1474,11 @@ namespace VinXiangQi
 
         public async void PlayChess(string move)
         {
-            if (move == null || move.Length != 4) return;
+            if (move == null || move.Length != 4)
+            {
+                LogHelper.Info("[PlayChess] 着法无效被忽略 move=" + (move == null ? "null" : move));
+                return;
+            }
             await Task.Run(new Action(()=>{
               try
               {
@@ -1246,6 +1486,10 @@ namespace VinXiangQi
                 Point toPoint = Utils.Move2Point(move.Substring(2, 2),RedSide);
                 Point fromClickPoint = ClickPositionMap[fromPoint.X, fromPoint.Y];
                 Point toClickPoint = ClickPositionMap[toPoint.X, toPoint.Y];
+                LogHelper.Info("[PlayChess] 执行点击 move=" + move + " RedSide=" + RedSide
+                    + " from(" + fromPoint.X + "," + fromPoint.Y + ")->px" + fromClickPoint.X + "," + fromClickPoint.Y
+                    + " to(" + toPoint.X + "," + toPoint.Y + ")->px" + toClickPoint.X + "," + toClickPoint.Y
+                    + " ClickHandle=" + ClickHandle + " GameHandle=" + GameHandle);
                 ChangeDetectedAfterClick = false;
                 MouseLeftClient_2Point(fromClickPoint.X, fromClickPoint.Y, toClickPoint.X, toClickPoint.Y);
               }

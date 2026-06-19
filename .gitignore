@@ -5,4 +5,11 @@ VinXiangQi/obj/
 VinXiangQi_v1.0.0_Release.zip
 err.log
 logs/
+records/
+
+# 运行时生成的本地配置(含本机坐标/引擎路径等)，不应入库
+VinXiangQi/settings.json
+
+# Windows 上误用保留设备名 nul 产生的垃圾空文件
+nul
 

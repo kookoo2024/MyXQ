@@ -35,6 +35,48 @@ namespace VinXiangQi
         private const int WM_NCLBUTTONDOWN = 0xA1;
         private const int HT_CAPTION = 0x2;
 
+        // === Layered Window (per-pixel alpha) 相关 P/Invoke ===
+        // 用于浮动分数窗的真半透明：离屏绘制 32bpp ARGB 位图后用 UpdateLayeredWindow 推送，
+        // 使窗体可透出背后的游戏/桌面画面。普通 TransparencyKey 只支持单色 key 抠图，
+        // 无法做半透明渐变和抗锯齿圆角，故必须走 layered window。
+        [DllImport("user32.dll")]
+        static extern bool SetLayeredWindowAttributes(IntPtr hWnd, uint crKey, byte alpha, uint dwFlags);
+        [DllImport("user32.dll")]
+        static extern bool UpdateLayeredWindow(IntPtr hWnd, IntPtr hdcDst, ref Point pptDst, ref Size psize,
+            IntPtr hdcSrc, ref Point pptSrc, uint crKey, ref BLENDFUNCTION pblend, uint dwFlags);
+        [DllImport("user32.dll")]
+        static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll")]
+        static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+        [DllImport("gdi32.dll")]
+        static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteObject(IntPtr hObject);
+        [DllImport("gdi32.dll")]
+        static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+        [DllImport("gdi32.dll")]
+        static extern bool DeleteDC(IntPtr hdc);
+        [DllImport("user32.dll")]
+        static extern IntPtr GetDC(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        const int GWL_EXSTYLE = -20;
+        const int WS_EX_LAYERED = 0x00080000;
+        const int WS_EX_TRANSPARENT = 0x00000020;
+        const uint ULW_ALPHA = 0x00000002;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct BLENDFUNCTION
+        {
+            public byte BlendOp;      // AC_SRC_OVER = 0
+            public byte BlendFlags;   // 0
+            public byte SourceConstant; // 整体不透明度（与位图 alpha 相乘）
+            public byte AlphaFormat;  // AC_SRC_ALPHA = 1
+        }
+        const byte AC_SRC_OVER = 0;
+        const byte AC_SRC_ALPHA = 1;
+
         private bool _isLargeSize = false;
         private const int SmallW = 225, SmallH = 208;
         private const int LargeW = 450, LargeH = 416;
@@ -43,8 +85,16 @@ namespace VinXiangQi
             InitializeComponent();
         }
 
-        // 程序版本
-        public static string Version = "1.0.0";
+        // 程序版本：统一从程序集版本读取（AssemblyInfo.cs），避免多处硬编码不一致
+        // 显示时取 Major.Minor.Build 三段，与历史格式 "1.0.0" 一致
+        public static string Version
+        {
+            get
+            {
+                var v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                return v.Major + "." + v.Minor + "." + v.Build;
+            }
+        }
 
         // 用于截图的窗口句柄
         public static IntPtr GameHandle = IntPtr.Zero;
@@ -126,12 +176,65 @@ namespace VinXiangQi
             public Point To;
         }
 
-        private Label _floatingScoreLabel;
         private Form _floatingScoreForm;
         private System.Windows.Forms.Timer _floatingTopmostTimer;
         private int _floatingClickCount;
         private int _floatingClickZone;
         private System.Windows.Forms.Timer _floatingClickTimer;
+
+        // === 浮动分数窗（半透明白胶囊，真 per-pixel alpha）===
+        // 用 Layered Window (UpdateLayeredWindow + 32bpp ARGB) 实现：窗体可透出背后
+        // 游戏/桌面画面，半透明白底在任何背景上都可见，圆角抗锯齿干净。
+        // 内容变化（分数/深度/hover）时离屏重绘 bitmap 再整体推送，不走 WM_PAINT。
+        const int FloatW = 104, FloatH = 52;
+        const int FloatRadius = 12;
+        // 半透明白胶囊：底色白 alpha≈210（透出约 18% 背景画面，又不至于让文字糊），
+        // 描边深灰，辅助文字中灰。文字用深色，在浅白底上清晰。
+        const int FloatBgAlpha = 210;
+        static readonly Color FloatBg = Color.FromArgb(248, 250, 252);
+        static readonly Color FloatBorder = Color.FromArgb(210, 100, 116, 139);
+        static readonly Color FloatDim = Color.FromArgb(180, 71, 85, 105);
+        static readonly Color FloatHover = Color.FromArgb(60, 59, 130, 246); // hover 蓝色低透
+        // 分数配色（浅白底上）：正分深红、负分深蓝、绝杀深绿，都高对比可读
+        static readonly Color FloatScorePositive = Color.FromArgb(220, 38, 38);
+        static readonly Color FloatScoreNegative = Color.FromArgb(29, 78, 216);
+        static readonly Color FloatScoreMate = Color.FromArgb(21, 128, 61);
+
+        // === 主窗木质棋盘风配色（ApplyWoodTheme + Label 动态配色共用）===
+        // 与浮动窗配色并列集中在此，便于统一调色。board.png 已是木质纹理，
+        // 窗体/按钮/标题栏用木色系与之呼应，形成统一质感。
+        static readonly Color WoodBg        = Color.FromArgb(107, 68, 35);   // 深棕窗体底
+        static readonly Color WoodPanel     = Color.FromArgb(139, 94, 60);   // 中棕右侧工具栏
+        static readonly Color WoodBtnFace   = Color.FromArgb(212, 165, 116); // 浅木金按钮底
+        static readonly Color WoodBtnHover  = Color.FromArgb(224, 181, 130); // hover 更亮金
+        static readonly Color WoodBtnText   = Color.FromArgb(58, 36, 18);    // 深褐按钮字
+        static readonly Color WoodBorder    = Color.FromArgb(90, 56, 32);    // 深褐描边/分隔
+        static readonly Color WoodTitle     = Color.FromArgb(245, 230, 200); // 米白标题字
+        static readonly Color WoodDimText   = Color.FromArgb(201, 169, 110); // 暗金次要字(着法)
+        static readonly Color WoodAccentRed = Color.FromArgb(192, 57, 43);   // 沉稳深红(GO按钮底/关闭hover)
+        // 分数专用亮朱红：沉稳红#c0392b 在中棕面板(#8b5e3c)上明度太接近、看不清。
+        // 提亮到#ff5252，与棕底明度差拉大，正分清晰可读。负分用深蓝灰对比已足够。
+        static readonly Color WoodScoreRed  = Color.FromArgb(255, 82, 82);   // 亮朱红(正分专用)
+        static readonly Color WoodAccentBlk = Color.FromArgb(44, 62, 80);    // 深蓝灰(负分)
+
+        int _floatHoverZone = -1;
+        string _floatScoreText = "--";
+        Color _floatScoreColor = Color.FromArgb(220, 38, 38);
+        string _floatDepthText = "";
+
+        static System.Drawing.Drawing2D.GraphicsPath BuildRoundedRectPath(Rectangle r, int radius)
+        {
+            var path = new System.Drawing.Drawing2D.GraphicsPath();
+            int d = radius * 2;
+            if (d >= r.Width) d = r.Width;
+            if (d >= r.Height) d = r.Height;
+            path.AddArc(r.X, r.Y, d, d, 180, 90);
+            path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
 
         public void InitFloatingScore()
         {
@@ -142,38 +245,17 @@ namespace VinXiangQi
             {
                 FormBorderStyle = FormBorderStyle.None,
                 StartPosition = FormStartPosition.Manual,
-                Size = new Size(90, 44),
+                Size = new Size(FloatW, FloatH),
                 TopMost = true,
                 ShowInTaskbar = false,
-                BackColor = SystemColors.Control
+                // 背景色对 layered window 不影响显示（由位图决定），设为透明便于调试
+                BackColor = Color.Fuchsia
             };
-            _floatingScoreForm.Paint += (s, e) =>
-            {
-                var g = e.Graphics;
-                int w = _floatingScoreForm.ClientSize.Width;
-                int h = _floatingScoreForm.ClientSize.Height;
-                using (Pen p = new Pen(Color.Green, 2))
-                    g.DrawRectangle(p, 1, 1, w - 2, h - 2);
-                using (Pen d = new Pen(Color.Green, 1))
-                {
-                    d.DashStyle = System.Drawing.Drawing2D.DashStyle.Dot;
-                    g.DrawLine(d, w / 3, 4, w / 3, h - 4);
-                    g.DrawLine(d, w * 2 / 3, 4, w * 2 / 3, h - 4);
-                }
-            };
-
-            _floatingScoreLabel = new Label
-            {
-                Dock = DockStyle.Fill,
-                Font = new Font("Consolas", 20F, FontStyle.Bold),
-                ForeColor = Color.Red,
-                Text = "--",
-                TextAlign = ContentAlignment.MiddleCenter
-            };
-            _floatingScoreLabel.MouseDown += FloatingScore_MouseDown;
             _floatingScoreForm.MouseDown += FloatingScore_MouseDown;
-
-            _floatingScoreForm.Controls.Add(_floatingScoreLabel);
+            _floatingScoreForm.MouseMove += FloatForm_MouseMove;
+            _floatingScoreForm.MouseLeave += FloatForm_MouseLeave;
+            // layered window 的位图通过 ptDst 绑定屏幕坐标，拖动时需重绘跟随新位置
+            _floatingScoreForm.LocationChanged += (s, e) => UpdateFloatLayered();
 
             if (Settings.FloatingScoreX >= 0 && Settings.FloatingScoreY >= 0)
                 _floatingScoreForm.Location = new Point(Settings.FloatingScoreX, Settings.FloatingScoreY);
@@ -181,6 +263,11 @@ namespace VinXiangQi
                 _floatingScoreForm.Shown += (s, e) => { _floatingScoreForm.Location = new Point(this.Right + 4, this.Top); };
 
             _floatingScoreForm.Show(this);
+
+            // 设置 WS_EX_LAYERED，使窗体支持 per-pixel alpha。
+            // 必须在 Show 之后、第一次 UpdateLayeredWindow 之前设置。
+            EnableLayeredWindow(_floatingScoreForm.Handle);
+            UpdateFloatLayered();
             PinFloatingTopmost();
 
             if (_floatingTopmostTimer == null)
@@ -192,12 +279,165 @@ namespace VinXiangQi
             _floatingTopmostTimer.Start();
         }
 
+        static void EnableLayeredWindow(IntPtr hwnd)
+        {
+            int ex = GetWindowLong(hwnd, GWL_EXSTYLE);
+            SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+        }
+
+        static int FloatZoneOfX(int x, int width)
+        {
+            return x < width / 3 ? 0 : x < width * 2 / 3 ? 1 : 2;
+        }
+
+        void FloatForm_MouseMove(object sender, MouseEventArgs e)
+        {
+            int zone = FloatZoneOfX(e.X, FloatW);
+            if (zone != _floatHoverZone)
+            {
+                _floatHoverZone = zone;
+                UpdateFloatLayered();
+            }
+            if (_floatingScoreForm != null)
+                _floatingScoreForm.Cursor = Cursors.SizeAll;
+        }
+
+        void FloatForm_MouseLeave(object sender, EventArgs e)
+        {
+            if (_floatHoverZone != -1)
+            {
+                _floatHoverZone = -1;
+                UpdateFloatLayered();
+            }
+        }
+
+        // 离屏绘制浮动窗内容到 32bpp ARGB 位图
+        void RenderFloatToBitmap(Bitmap bmp)
+        {
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                Rectangle bounds = new Rectangle(0, 0, FloatW, FloatH);
+
+                // 圆角路径作为填充与裁剪区，保证圆角外为完全透明（alpha=0）
+                using (var path = BuildRoundedRectPath(bounds, FloatRadius))
+                {
+                    g.SetClip(path);
+                    // 半透明白底
+                    using (var bgBrush = new SolidBrush(Color.FromArgb(FloatBgAlpha, FloatBg)))
+                        g.FillRectangle(bgBrush, bounds);
+
+                    // hover 分区高亮
+                    if (_floatHoverZone >= 0)
+                    {
+                        int zoneW = FloatW / 3;
+                        Rectangle hoverRect = new Rectangle(_floatHoverZone * zoneW, 0, zoneW, FloatH);
+                        using (var hoverBrush = new SolidBrush(FloatHover))
+                            g.FillRectangle(hoverBrush, hoverRect);
+                    }
+                    g.ResetClip();
+
+                    // 圆角描边
+                    using (var borderPen = new Pen(FloatBorder, 1.4f))
+                        g.DrawPath(borderPen, path);
+                }
+
+                // 分数大字（居中偏上）
+                using (var scoreFont = new Font("Consolas", 18F, FontStyle.Bold))
+                using (var scoreBrush = new SolidBrush(_floatScoreColor))
+                {
+                    SizeF sz = g.MeasureString(_floatScoreText, scoreFont);
+                    float sx = (FloatW - sz.Width) / 2f;
+                    g.DrawString(_floatScoreText, scoreFont, scoreBrush, sx, 5);
+                }
+
+                // 深度小字（右上角）
+                if (!string.IsNullOrEmpty(_floatDepthText))
+                {
+                    using (var depthFont = new Font("Consolas", 8.5F))
+                    using (var depthBrush = new SolidBrush(FloatDim))
+                    {
+                        SizeF dsz = g.MeasureString(_floatDepthText, depthFont);
+                        g.DrawString(_floatDepthText, depthFont, depthBrush, FloatW - dsz.Width - 6, 4);
+                    }
+                }
+
+                // 底部优势条
+                if (_floatScoreText != "--")
+                {
+                    int barY = FloatH - 5;
+                    int barH = 3;
+                    int midX = FloatW / 2;
+                    using (var barBrush = new SolidBrush(_floatScoreColor))
+                    {
+                        if (_floatScoreColor == FloatScorePositive)
+                            g.FillRectangle(barBrush, 10, barY, midX - 10, barH);
+                        else if (_floatScoreColor == FloatScoreNegative)
+                            g.FillRectangle(barBrush, midX, barY, FloatW - midX - 10, barH);
+                    }
+                }
+            }
+        }
+
+        // 把 ARGB 位图通过 UpdateLayeredWindow 推送给 layered window，实现真半透明显示
+        void UpdateFloatLayered()
+        {
+            if (_floatingScoreForm == null || _floatingScoreForm.IsDisposed) return;
+            if (!_floatingScoreForm.IsHandleCreated) return;
+
+            IntPtr hwnd = _floatingScoreForm.Handle;
+            using (Bitmap bmp = new Bitmap(FloatW, FloatH, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            {
+                RenderFloatToBitmap(bmp);
+                // 锁定像素获取位图位数据，供 SetBitmap 使用
+                var rect = new Rectangle(0, 0, FloatW, FloatH);
+                var bmpData = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly, bmp.PixelFormat);
+                try
+                {
+                    IntPtr hBitmap = IntPtr.Zero;
+                    IntPtr hOld = IntPtr.Zero;
+                    IntPtr hdcScreen = GetDC(IntPtr.Zero);
+                    IntPtr hdcMem = CreateCompatibleDC(hdcScreen);
+                    try
+                    {
+                        // 用 GetHbitmap 得到 GDI 位图句柄供 SelectObject
+                        hBitmap = bmp.GetHbitmap(Color.FromArgb(0));
+                        hOld = SelectObject(hdcMem, hBitmap);
+
+                        Point ptDst = new Point(_floatingScoreForm.Location.X, _floatingScoreForm.Location.Y);
+                        Size sz = new Size(FloatW, FloatH);
+                        Point ptSrc = new Point(0, 0);
+                        BLENDFUNCTION blend = new BLENDFUNCTION
+                        {
+                            BlendOp = AC_SRC_OVER,
+                            BlendFlags = 0,
+                            SourceConstant = 255,         // 整体不透明度由位图自身 alpha 决定
+                            AlphaFormat = AC_SRC_ALPHA
+                        };
+                        UpdateLayeredWindow(hwnd, hdcScreen, ref ptDst, ref sz,
+                            hdcMem, ref ptSrc, 0, ref blend, ULW_ALPHA);
+                    }
+                    finally
+                    {
+                        if (hOld != IntPtr.Zero) SelectObject(hdcMem, hOld);
+                        if (hBitmap != IntPtr.Zero) DeleteObject(hBitmap);
+                        DeleteDC(hdcMem);
+                        ReleaseDC(IntPtr.Zero, hdcScreen);
+                    }
+                }
+                finally
+                {
+                    bmp.UnlockBits(bmpData);
+                }
+            }
+        }
+
         private void FloatingScore_MouseDown(object sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left) return;
 
-            int w = _floatingScoreForm.ClientSize.Width;
-            int zone = e.X < w / 3 ? 0 : e.X < w * 2 / 3 ? 1 : 2;
+            int zone = FloatZoneOfX(e.X, FloatW);
 
             _floatingClickCount++;
             if (_floatingClickCount == 1)
@@ -250,15 +490,45 @@ namespace VinXiangQi
             {
                 _floatingScoreForm.Close();
                 _floatingScoreForm = null;
-                _floatingScoreLabel = null;
             }
+            // 重置显示状态，下次开启时回到 "--" 初值
+            _floatScoreText = "--";
+            _floatScoreColor = Color.Red;
+            _floatDepthText = "";
+            _floatHoverZone = -1;
         }
 
-        void UpdateFloatingScore(string text, Color color)
+        // 主界面是无边框紧凑窗体，没有菜单栏。这里构建一个右键菜单挂到棋盘上，
+        // 既给"导出棋谱/关于/引擎管理/开局库管理"提供入口，也复活了原先
+        // 因菜单栏被移除而失效的 ToolStripMenuItem_*_Click 处理器。
+        ContextMenuStrip _boardContextMenu;
+        void InitContextMenu()
         {
-            if (_floatingScoreLabel == null) return;
-            _floatingScoreLabel.Text = text;
-            _floatingScoreLabel.ForeColor = color;
+            _boardContextMenu = new ContextMenuStrip();
+            _boardContextMenu.Items.Add("导出棋谱 (F5)", null, (s, e) => ExportGameRecord());
+            _boardContextMenu.Items.Add("-");
+            _boardContextMenu.Items.Add("开始识别 (F1)", null, (s, e) => StartDetection(false));
+            _boardContextMenu.Items.Add("停止识别 (F3)", null, (s, e) => button_stop_detection_Click(null, null));
+            _boardContextMenu.Items.Add("截图 (F4)", null, (s, e) => button_screenshot_Click(null, null));
+            _boardContextMenu.Items.Add("-");
+            _boardContextMenu.Items.Add("引擎管理", null, (s, e) => ToolStripMenuItem_engine_management_Click(null, null));
+            _boardContextMenu.Items.Add("开局库管理", null, (s, e) => ToolStripMenuItem_openbook_management_Click(null, null));
+            _boardContextMenu.Items.Add("设置", null, (s, e) => button_settings_Click(null, null));
+            _boardContextMenu.Items.Add("-");
+            _boardContextMenu.Items.Add("关于", null, (s, e) => ToolStripMenuItem_about_Click(null, null));
+
+            pictureBox_board.ContextMenuStrip = _boardContextMenu;
+            panel_right.ContextMenuStrip = _boardContextMenu;
+            panel_drag_top.ContextMenuStrip = _boardContextMenu;
+        }
+
+        void UpdateFloatingScore(string text, Color color, string depth = "")
+        {
+            _floatScoreText = text;
+            _floatScoreColor = color;
+            _floatDepthText = depth ?? "";
+            // layered window 不响应 Invalidate/WM_PAINT，必须主动重绘位图并推送
+            UpdateFloatLayered();
         }
 
         private void Mainform_Load(object sender, EventArgs e)
@@ -275,6 +545,8 @@ namespace VinXiangQi
                 InitResultDisplay();
                 InitEngine();
                 InitFloatingScore();
+                InitContextMenu();
+                ApplyWoodTheme();
                 Settings.BackgroundAnalysis = false;
                 checkBox_auto_go.Checked = Settings.AutoGo;
                 checkBox_two_steps.Checked = ShowTwoSteps;
@@ -290,17 +562,150 @@ namespace VinXiangQi
             }
         }
 
+        // 窗体首次显示后兜底重排一次右侧面板。
+        // Load 阶段 TableLayoutPanel 的 Fill 子控件 ClientSize 偶有未完成布局的情况，
+        // Shown 时布局必然就绪，此时按真实高度重排可避免元素挤在顶部。
+        private void Mainform_Shown(object sender, EventArgs e)
+        {
+            LayoutRightPanel();
+        }
+
+        // 木质棋盘风换肤：集中设置运行时外观属性。
+        // FlatAppearance.MouseOverBackColor 等在 Designer 里跨 .NET Framework 版本支持不稳，
+        // 统一在代码里设，保证外观一致且可维护。布局/坐标/控件类型一律不动。
+        void ApplyWoodTheme()
+        {
+            // 窗体 + 拖拽条统一深棕底
+            this.BackColor = WoodBg;
+            panel_drag_top.BackColor = WoodBg;
+            panel_drag_bottom.BackColor = WoodBg;
+            panel_right.BackColor = WoodPanel;
+            // TableLayoutPanel 也设木色：pictureBox_board 背景透明后透出此色，
+            // Zoom 模式比例不匹配留出的边不再是白圈，而是与棋盘浑然一体的木色。
+            tableLayoutPanel_content.BackColor = WoodBg;
+
+            // 四个按钮统一木金风格(Flat 无立体边框)，GO 用沉稳红强调主操作
+            StyleWoodButton(button_stop_detection, false);
+            StyleWoodButton(button_settings, false);
+            StyleWoodButton(button_size, false);
+            StyleWoodButton(button_start, true); // GO 主操作：红底白字
+
+            // 标题栏 Label 常态配色(动态修改在各自事件里)
+            label_moves.ForeColor = WoodDimText;
+            label_score.ForeColor = WoodScoreRed;
+            label_topmost.ForeColor = this.TopMost ? WoodAccentRed : WoodTitle;
+            label_close.ForeColor = WoodTitle;
+            // 右侧面板上的 CheckBox 文字用米白，在木色底上清晰统一
+            checkBox_auto_go.ForeColor = WoodTitle;
+            checkBox_two_steps.ForeColor = WoodTitle;
+
+            // 右侧工具栏元素等间距重排。
+            // panel_right 可用区 = 36宽 × 178高(Padding 15/3/15/3)。
+            // 原坐标是各自硬编码的，间距随意且 GO 与 END 重叠 3px、Checkbox 宽度
+            // 超出可用宽被裁切。这里按统一行高+等间距公式重排，宽度统一满宽居中。
+            LayoutRightPanel();
+        }
+
+        // 右侧工具栏均匀排布。
+        // 宽高都动态读取 panel_right 可用区(扣除 Padding)，这样调整 Padding 或
+        // 切换大小尺寸时元素都能自动满宽铺开，不会留出难看的空白带。
+        // 7 个元素自上而下：自动☑ / 双步☑ / 设置 / 大小 / 分数 / END / GO。
+        void LayoutRightPanel()
+        {
+            // 动态读取可用宽高(扣除 Padding)，与高度同理
+            int innerW = panel_right.ClientSize.Width - panel_right.Padding.Left - panel_right.Padding.Right;
+            int innerH = panel_right.ClientSize.Height - panel_right.Padding.Top - panel_right.Padding.Bottom;
+            if (innerW < 30) innerW = 30;   // 容错：构造期 ClientSize 可能尚未就绪
+            if (innerH < 120) innerH = 120;
+
+            // 元素固有高度(自上而下)
+            const int hCheck = 20;   // Checkbox 单行
+            const int hBtn   = 24;   // 普通按钮
+            const int hScore = 22;   // 分数 label
+            const int hGo    = 26;   // GO 主操作略高
+
+            int totalH = hCheck * 2 + hBtn * 2 + hScore + hBtn + hGo;
+            int gap = (innerH - totalH) / 6; // 7 元素 6 间隙
+            if (gap < 2) gap = 2;
+
+            int y = 0;
+            PlaceRow(checkBox_auto_go,      ref y, innerW, hCheck, gap);
+            PlaceRow(checkBox_two_steps,    ref y, innerW, hCheck, gap);
+            PlaceRow(button_settings,       ref y, innerW, hBtn,   gap);
+            PlaceRow(button_size,           ref y, innerW, hBtn,   gap);
+            PlaceRow(label_score,           ref y, innerW, hScore, gap);
+            PlaceRow(button_stop_detection, ref y, innerW, hBtn,   gap);
+            PlaceRow(button_start,          ref y, innerW, hGo,    gap);
+        }
+
+        // 把控件放到当前行：X=0(满宽居中)、Y=当前行起，并把 y 推进到下一行(高+gap)。
+        // 用 ref y 实现链式累加，避免散落的魔法数字。
+        static void PlaceRow(Control c, ref int y, int w, int h, int gap)
+        {
+            c.Location = new Point(0, y);
+            c.Size = new Size(w, h);
+            y += h + gap;
+        }
+
+        // 统一按钮木质外观。isPrimary=true 时用沉稳红底白字(GO)，否则浅木金底深褐字。
+        void StyleWoodButton(Button btn, bool isPrimary)
+        {
+            btn.FlatStyle = FlatStyle.Flat;
+            btn.FlatAppearance.BorderSize = 0;
+            btn.ForeColor = isPrimary ? Color.White : WoodBtnText;
+            btn.BackColor = isPrimary ? WoodAccentRed : WoodBtnFace;
+            btn.FlatAppearance.MouseOverBackColor = isPrimary
+                ? ControlPaint.Dark(WoodAccentRed, 0.1f)
+                : WoodBtnHover;
+            btn.FlatAppearance.MouseDownBackColor = isPrimary
+                ? ControlPaint.Dark(WoodAccentRed, 0.2f)
+                : ControlPaint.Dark(WoodBtnFace, 0.1f);
+        }
+
         public static void LoadSettings()
         {
             if (File.Exists(SettingsPath))
             {
                 Settings = JsonConvert.DeserializeObject<ProgramSettings>(File.ReadAllText(SettingsPath));
+                // 持久化时引擎路径是相对路径（相对程序基目录），加载后还原为绝对路径
+                // 供 File.Exists / Process.Start 使用，保证后续逻辑无需感知路径形式。
+                if (Settings != null)
+                {
+                    foreach (var engine in Settings.EngineList)
+                    {
+                        engine.Value.ExePath = Utils.ToAbsolutePath(engine.Value.ExePath);
+                    }
+                }
             }
         }
 
         public static void SaveSettings()
         {
-            File.WriteAllText(SettingsPath, JsonConvert.SerializeObject(Settings));
+            // 保存前把引擎路径相对化，避免 settings.json 里出现 D:\... 绝对路径，
+            // 使整个目录可在不同机器间拷贝。转换后立即写盘再还原内存中的绝对路径，
+            // 避免影响正在运行的引擎（运行期 ExePath 始终为绝对路径）。
+            Dictionary<string, string> originalPaths = new Dictionary<string, string>();
+            foreach (var engine in Settings.EngineList)
+            {
+                string rel = Utils.ToRelativePath(engine.Value.ExePath);
+                if (rel != engine.Value.ExePath)
+                {
+                    originalPaths[engine.Key] = engine.Value.ExePath;
+                    engine.Value.ExePath = rel;
+                }
+            }
+            try
+            {
+                File.WriteAllText(SettingsPath, JsonConvert.SerializeObject(Settings));
+            }
+            finally
+            {
+                // 写盘后还原内存中的绝对路径，保持运行期状态不变
+                foreach (var kv in originalPaths)
+                {
+                    Settings.EngineList[kv.Key].ExePath = kv.Value;
+                }
+            }
         }
 
         void InitThreads()
@@ -519,6 +924,9 @@ namespace VinXiangQi
             ExpectedSelfGoBoard = null;
             ExpectedMove = "";
             ExpectedBoardMap.Clear();
+            // 清空走法记录：上一局的着法在新局无意义，保留会误触发长打检测，
+            // 同时保证棋谱导出只含本局着法
+            BestMoveList.Clear();
         }
 
         void StartDetection(bool fromOpponent)
@@ -799,12 +1207,106 @@ namespace VinXiangQi
             }
         }
 
+        // 全局快捷键上次按下状态，用于边沿检测（按下瞬间触发一次，避免长按重复触发）
+        // F2 取句柄沿用原有逻辑（每 Tick 轮询），这里管理 F1/F3/F4/F5
+        static bool _f1Down, _f3Down, _f4Down, _f5Down;
+
+        static bool EdgeTrigger(ref bool prev, Keys key)
+        {
+            // MouseHelper.GetAsyncKeyState 声明为返回 bool（按下即为 true）。
+            // 边沿检测：仅当"本次为按下且上次未按下"时触发一次，避免长按重复。
+            bool now = MouseHelper.GetAsyncKeyState(key);
+            bool triggered = now && !prev;
+            prev = now;
+            return triggered;
+        }
+
+        void HandleHotkeys()
+        {
+            // F1 开始识别（从己方）、F3 停止、F4 截图、F5 导出棋谱
+            // 均为边沿触发：只在按下瞬间响应一次，松开前不会重复
+            try
+            {
+                if (MouseHelper.GetAsyncKeyState(Keys.F2))
+                {
+                    GetHandle();
+                }
+                if (EdgeTrigger(ref _f1Down, Keys.F1))
+                {
+                    StartDetection(false);
+                }
+                if (EdgeTrigger(ref _f3Down, Keys.F3))
+                {
+                    button_stop_detection_Click(null, null);
+                }
+                if (EdgeTrigger(ref _f4Down, Keys.F4))
+                {
+                    button_screenshot_Click(null, null);
+                }
+                if (EdgeTrigger(ref _f5Down, Keys.F5))
+                {
+                    ExportGameRecord();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogHelper.Error(ex, "HandleHotkeys");
+            }
+        }
+
+        /// <summary>
+        /// 导出本局棋谱到 logs 同级的 records 目录。
+        /// 由于历史每步棋盘快照未持久化，这里导出引擎坐标走法序列 + 当前局面 FEN，
+        /// 配合任意象棋软件可复盘。文件名含时间戳，避免覆盖。
+        /// </summary>
+        public void ExportGameRecord()
+        {
+            try
+            {
+                var moves = BestMoveList;
+                if (moves == null || moves.Count == 0)
+                {
+                    MessageBox.Show("当前还没有走法记录，无法导出。");
+                    return;
+                }
+                string dir = @".\records";
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string file = Path.Combine(dir, "棋谱_" + stamp + ".txt");
+
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("Vin象棋 棋谱导出");
+                sb.AppendLine("时间: " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                sb.AppendLine("本方: " + (RedSide ? "红方" : "黑方"));
+                sb.AppendLine("总步数: " + moves.Count);
+                sb.AppendLine();
+                sb.AppendLine("[引擎坐标走法（UCI格式，如 h2e2）]");
+                for (int i = 0; i < moves.Count; i++)
+                {
+                    sb.AppendLine((i + 1).ToString("D2") + ". " + moves[i]);
+                }
+                sb.AppendLine();
+                string fen = "";
+                if (CurrentBoard != null)
+                {
+                    fen = Utils.BoardToFen(CurrentBoard, RedSide);
+                }
+                sb.AppendLine("[当前局面 FEN]");
+                sb.AppendLine(string.IsNullOrEmpty(fen) ? "(无)" : fen);
+
+                File.WriteAllText(file, sb.ToString(), Encoding.UTF8);
+                DisplayStatus("已导出棋谱: " + file);
+            }
+            catch (Exception ex)
+            {
+                LogHelper.Error(ex, "ExportGameRecord");
+                MessageBox.Show("导出棋谱失败: " + ex.Message);
+            }
+        }
+
         private void timer_set_window_hwnd_Tick(object sender, EventArgs e)
         {
-            if (MouseHelper.GetAsyncKeyState(Keys.F2))
-            {
-                GetHandle();
-            }
+            HandleHotkeys();
         }
 
         private void pictureBox_board_MouseDown(object sender, MouseEventArgs e)
@@ -996,6 +1498,8 @@ namespace VinXiangQi
             this.ClientSize = _isLargeSize
                 ? new Size(LargeW, LargeH)
                 : new Size(SmallW, SmallH);
+            // 尺寸切换后 panel_right 高度变化，重新等间距排布右侧元素
+            LayoutRightPanel();
         }
 
         private void label_close_Click(object sender, EventArgs e)
@@ -1006,24 +1510,24 @@ namespace VinXiangQi
         private void label_close_MouseEnter(object sender, EventArgs e)
         {
             label_close.ForeColor = Color.White;
-            label_close.BackColor = Color.IndianRed;
+            label_close.BackColor = WoodAccentRed;
         }
 
         private void label_close_MouseLeave(object sender, EventArgs e)
         {
-            label_close.ForeColor = Color.Gray;
+            label_close.ForeColor = WoodTitle;
             label_close.BackColor = Color.Transparent;
         }
 
         private void label_topmost_Click(object sender, EventArgs e)
         {
             this.TopMost = !this.TopMost;
-            label_topmost.ForeColor = this.TopMost ? Color.DeepSkyBlue : Color.Gray;
+            label_topmost.ForeColor = this.TopMost ? WoodAccentRed : WoodTitle;
         }
 
         private void label_topmost_MouseEnter(object sender, EventArgs e)
         {
-            label_topmost.BackColor = Color.LightGray;
+            label_topmost.BackColor = Color.FromArgb(60, 245, 230, 200);
         }
 
         private void label_topmost_MouseLeave(object sender, EventArgs e)
@@ -1046,16 +1550,19 @@ namespace VinXiangQi
             {
                 string display = (score >= 0 ? "+" : "-") + Math.Abs(score).ToString();
                 label_score.Text = Math.Abs(score).ToString();
-                label_score.ForeColor = score >= 0 ? Color.Red : Color.Black;
+                label_score.ForeColor = score >= 0 ? WoodScoreRed : WoodAccentBlk;
                 this.Text = display;
-                UpdateFloatingScore(display, score >= 0 ? Color.Red : Color.Black);
+                // 主窗分数标签用亮朱红/深蓝灰(木色底上清晰)；浮动窗是半透明白底，
+                // 用深红/深蓝与之匹配且在浅底上清晰。
+                Color floatColor = score >= 0 ? FloatScorePositive : FloatScoreNegative;
+                UpdateFloatingScore(display, floatColor, _floatDepthText);
             }
             else
             {
                 label_score.Text = scoreStr;
-                label_score.ForeColor = Color.Red;
+                label_score.ForeColor = WoodAccentRed;
                 this.Text = scoreStr;
-                UpdateFloatingScore(scoreStr, Color.Red);
+                UpdateFloatingScore(scoreStr, FloatScorePositive, _floatDepthText);
             }
         }
 

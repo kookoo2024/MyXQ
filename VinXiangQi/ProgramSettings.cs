@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 
 namespace VinXiangQi
 {
@@ -43,6 +44,10 @@ namespace VinXiangQi
             Random
         }
 
+        // CurrentEngine 只是 EngineList[SelectedEngine] 的便捷视图，属计算属性，
+        // 不应序列化。原实现被序列化进 settings.json，里面带着 ExePath 绝对路径，
+        // 既冗余又会在换机器时造成混乱。
+        [JsonIgnore]
         public EngineSettings CurrentEngine
         {
             get
