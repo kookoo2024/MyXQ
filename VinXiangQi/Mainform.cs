@@ -199,6 +199,24 @@ namespace VinXiangQi
         static readonly Color FloatScorePositive = Color.FromArgb(220, 38, 38);
         static readonly Color FloatScoreNegative = Color.FromArgb(29, 78, 216);
         static readonly Color FloatScoreMate = Color.FromArgb(21, 128, 61);
+
+        // === 主窗木质棋盘风配色（ApplyWoodTheme + Label 动态配色共用）===
+        // 与浮动窗配色并列集中在此，便于统一调色。board.png 已是木质纹理，
+        // 窗体/按钮/标题栏用木色系与之呼应，形成统一质感。
+        static readonly Color WoodBg        = Color.FromArgb(107, 68, 35);   // 深棕窗体底
+        static readonly Color WoodPanel     = Color.FromArgb(139, 94, 60);   // 中棕右侧工具栏
+        static readonly Color WoodBtnFace   = Color.FromArgb(212, 165, 116); // 浅木金按钮底
+        static readonly Color WoodBtnHover  = Color.FromArgb(224, 181, 130); // hover 更亮金
+        static readonly Color WoodBtnText   = Color.FromArgb(58, 36, 18);    // 深褐按钮字
+        static readonly Color WoodBorder    = Color.FromArgb(90, 56, 32);    // 深褐描边/分隔
+        static readonly Color WoodTitle     = Color.FromArgb(245, 230, 200); // 米白标题字
+        static readonly Color WoodDimText   = Color.FromArgb(201, 169, 110); // 暗金次要字(着法)
+        static readonly Color WoodAccentRed = Color.FromArgb(192, 57, 43);   // 沉稳深红(GO按钮底/关闭hover)
+        // 分数专用亮朱红：沉稳红#c0392b 在中棕面板(#8b5e3c)上明度太接近、看不清。
+        // 提亮到#ff5252，与棕底明度差拉大，正分清晰可读。负分用深蓝灰对比已足够。
+        static readonly Color WoodScoreRed  = Color.FromArgb(255, 82, 82);   // 亮朱红(正分专用)
+        static readonly Color WoodAccentBlk = Color.FromArgb(44, 62, 80);    // 深蓝灰(负分)
+
         int _floatHoverZone = -1;
         string _floatScoreText = "--";
         Color _floatScoreColor = Color.FromArgb(220, 38, 38);
@@ -528,6 +546,7 @@ namespace VinXiangQi
                 InitEngine();
                 InitFloatingScore();
                 InitContextMenu();
+                ApplyWoodTheme();
                 Settings.BackgroundAnalysis = false;
                 checkBox_auto_go.Checked = Settings.AutoGo;
                 checkBox_two_steps.Checked = ShowTwoSteps;
@@ -541,6 +560,106 @@ namespace VinXiangQi
             {
                 MessageBox.Show(ex.ToString());
             }
+        }
+
+        // 窗体首次显示后兜底重排一次右侧面板。
+        // Load 阶段 TableLayoutPanel 的 Fill 子控件 ClientSize 偶有未完成布局的情况，
+        // Shown 时布局必然就绪，此时按真实高度重排可避免元素挤在顶部。
+        private void Mainform_Shown(object sender, EventArgs e)
+        {
+            LayoutRightPanel();
+        }
+
+        // 木质棋盘风换肤：集中设置运行时外观属性。
+        // FlatAppearance.MouseOverBackColor 等在 Designer 里跨 .NET Framework 版本支持不稳，
+        // 统一在代码里设，保证外观一致且可维护。布局/坐标/控件类型一律不动。
+        void ApplyWoodTheme()
+        {
+            // 窗体 + 拖拽条统一深棕底
+            this.BackColor = WoodBg;
+            panel_drag_top.BackColor = WoodBg;
+            panel_drag_bottom.BackColor = WoodBg;
+            panel_right.BackColor = WoodPanel;
+            // TableLayoutPanel 也设木色：pictureBox_board 背景透明后透出此色，
+            // Zoom 模式比例不匹配留出的边不再是白圈，而是与棋盘浑然一体的木色。
+            tableLayoutPanel_content.BackColor = WoodBg;
+
+            // 四个按钮统一木金风格(Flat 无立体边框)，GO 用沉稳红强调主操作
+            StyleWoodButton(button_stop_detection, false);
+            StyleWoodButton(button_settings, false);
+            StyleWoodButton(button_size, false);
+            StyleWoodButton(button_start, true); // GO 主操作：红底白字
+
+            // 标题栏 Label 常态配色(动态修改在各自事件里)
+            label_moves.ForeColor = WoodDimText;
+            label_score.ForeColor = WoodScoreRed;
+            label_topmost.ForeColor = this.TopMost ? WoodAccentRed : WoodTitle;
+            label_close.ForeColor = WoodTitle;
+            // 右侧面板上的 CheckBox 文字用米白，在木色底上清晰统一
+            checkBox_auto_go.ForeColor = WoodTitle;
+            checkBox_two_steps.ForeColor = WoodTitle;
+
+            // 右侧工具栏元素等间距重排。
+            // panel_right 可用区 = 36宽 × 178高(Padding 15/3/15/3)。
+            // 原坐标是各自硬编码的，间距随意且 GO 与 END 重叠 3px、Checkbox 宽度
+            // 超出可用宽被裁切。这里按统一行高+等间距公式重排，宽度统一满宽居中。
+            LayoutRightPanel();
+        }
+
+        // 右侧工具栏均匀排布。
+        // 宽高都动态读取 panel_right 可用区(扣除 Padding)，这样调整 Padding 或
+        // 切换大小尺寸时元素都能自动满宽铺开，不会留出难看的空白带。
+        // 7 个元素自上而下：自动☑ / 双步☑ / 设置 / 大小 / 分数 / END / GO。
+        void LayoutRightPanel()
+        {
+            // 动态读取可用宽高(扣除 Padding)，与高度同理
+            int innerW = panel_right.ClientSize.Width - panel_right.Padding.Left - panel_right.Padding.Right;
+            int innerH = panel_right.ClientSize.Height - panel_right.Padding.Top - panel_right.Padding.Bottom;
+            if (innerW < 30) innerW = 30;   // 容错：构造期 ClientSize 可能尚未就绪
+            if (innerH < 120) innerH = 120;
+
+            // 元素固有高度(自上而下)
+            const int hCheck = 20;   // Checkbox 单行
+            const int hBtn   = 24;   // 普通按钮
+            const int hScore = 22;   // 分数 label
+            const int hGo    = 26;   // GO 主操作略高
+
+            int totalH = hCheck * 2 + hBtn * 2 + hScore + hBtn + hGo;
+            int gap = (innerH - totalH) / 6; // 7 元素 6 间隙
+            if (gap < 2) gap = 2;
+
+            int y = 0;
+            PlaceRow(checkBox_auto_go,      ref y, innerW, hCheck, gap);
+            PlaceRow(checkBox_two_steps,    ref y, innerW, hCheck, gap);
+            PlaceRow(button_settings,       ref y, innerW, hBtn,   gap);
+            PlaceRow(button_size,           ref y, innerW, hBtn,   gap);
+            PlaceRow(label_score,           ref y, innerW, hScore, gap);
+            PlaceRow(button_stop_detection, ref y, innerW, hBtn,   gap);
+            PlaceRow(button_start,          ref y, innerW, hGo,    gap);
+        }
+
+        // 把控件放到当前行：X=0(满宽居中)、Y=当前行起，并把 y 推进到下一行(高+gap)。
+        // 用 ref y 实现链式累加，避免散落的魔法数字。
+        static void PlaceRow(Control c, ref int y, int w, int h, int gap)
+        {
+            c.Location = new Point(0, y);
+            c.Size = new Size(w, h);
+            y += h + gap;
+        }
+
+        // 统一按钮木质外观。isPrimary=true 时用沉稳红底白字(GO)，否则浅木金底深褐字。
+        void StyleWoodButton(Button btn, bool isPrimary)
+        {
+            btn.FlatStyle = FlatStyle.Flat;
+            btn.FlatAppearance.BorderSize = 0;
+            btn.ForeColor = isPrimary ? Color.White : WoodBtnText;
+            btn.BackColor = isPrimary ? WoodAccentRed : WoodBtnFace;
+            btn.FlatAppearance.MouseOverBackColor = isPrimary
+                ? ControlPaint.Dark(WoodAccentRed, 0.1f)
+                : WoodBtnHover;
+            btn.FlatAppearance.MouseDownBackColor = isPrimary
+                ? ControlPaint.Dark(WoodAccentRed, 0.2f)
+                : ControlPaint.Dark(WoodBtnFace, 0.1f);
         }
 
         public static void LoadSettings()
@@ -805,6 +924,9 @@ namespace VinXiangQi
             ExpectedSelfGoBoard = null;
             ExpectedMove = "";
             ExpectedBoardMap.Clear();
+            // 清空走法记录：上一局的着法在新局无意义，保留会误触发长打检测，
+            // 同时保证棋谱导出只含本局着法
+            BestMoveList.Clear();
         }
 
         void StartDetection(bool fromOpponent)
@@ -1376,6 +1498,8 @@ namespace VinXiangQi
             this.ClientSize = _isLargeSize
                 ? new Size(LargeW, LargeH)
                 : new Size(SmallW, SmallH);
+            // 尺寸切换后 panel_right 高度变化，重新等间距排布右侧元素
+            LayoutRightPanel();
         }
 
         private void label_close_Click(object sender, EventArgs e)
@@ -1386,24 +1510,24 @@ namespace VinXiangQi
         private void label_close_MouseEnter(object sender, EventArgs e)
         {
             label_close.ForeColor = Color.White;
-            label_close.BackColor = Color.IndianRed;
+            label_close.BackColor = WoodAccentRed;
         }
 
         private void label_close_MouseLeave(object sender, EventArgs e)
         {
-            label_close.ForeColor = Color.Gray;
+            label_close.ForeColor = WoodTitle;
             label_close.BackColor = Color.Transparent;
         }
 
         private void label_topmost_Click(object sender, EventArgs e)
         {
             this.TopMost = !this.TopMost;
-            label_topmost.ForeColor = this.TopMost ? Color.DeepSkyBlue : Color.Gray;
+            label_topmost.ForeColor = this.TopMost ? WoodAccentRed : WoodTitle;
         }
 
         private void label_topmost_MouseEnter(object sender, EventArgs e)
         {
-            label_topmost.BackColor = Color.LightGray;
+            label_topmost.BackColor = Color.FromArgb(60, 245, 230, 200);
         }
 
         private void label_topmost_MouseLeave(object sender, EventArgs e)
@@ -1426,9 +1550,9 @@ namespace VinXiangQi
             {
                 string display = (score >= 0 ? "+" : "-") + Math.Abs(score).ToString();
                 label_score.Text = Math.Abs(score).ToString();
-                label_score.ForeColor = score >= 0 ? Color.Red : Color.Black;
+                label_score.ForeColor = score >= 0 ? WoodScoreRed : WoodAccentBlk;
                 this.Text = display;
-                // 主窗分数标签用红/黑(浅色背景可读)；浮动窗是半透明白底，
+                // 主窗分数标签用亮朱红/深蓝灰(木色底上清晰)；浮动窗是半透明白底，
                 // 用深红/深蓝与之匹配且在浅底上清晰。
                 Color floatColor = score >= 0 ? FloatScorePositive : FloatScoreNegative;
                 UpdateFloatingScore(display, floatColor, _floatDepthText);
@@ -1436,7 +1560,7 @@ namespace VinXiangQi
             else
             {
                 label_score.Text = scoreStr;
-                label_score.ForeColor = Color.Red;
+                label_score.ForeColor = WoodAccentRed;
                 this.Text = scoreStr;
                 UpdateFloatingScore(scoreStr, FloatScorePositive, _floatDepthText);
             }
