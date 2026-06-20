@@ -85,6 +85,7 @@ namespace VinXiangQi
             this.label_score_unit = new System.Windows.Forms.Label();
             this.checkBox_auto_click = new System.Windows.Forms.CheckBox();
             this.checkBox_show_floating_score = new System.Windows.Forms.CheckBox();
+            this.checkBox_mimic_human = new System.Windows.Forms.CheckBox();
 
             this.tabControl.SuspendLayout();
             this.tabPage_connection.SuspendLayout();
@@ -753,11 +754,12 @@ namespace VinXiangQi
             //
             // groupBox_adv_ui
             //
+            this.groupBox_adv_ui.Controls.Add(this.checkBox_mimic_human);
             this.groupBox_adv_ui.Controls.Add(this.checkBox_auto_click);
             this.groupBox_adv_ui.Controls.Add(this.checkBox_show_floating_score);
             this.groupBox_adv_ui.Location = new System.Drawing.Point(12, 120);
             this.groupBox_adv_ui.Name = "groupBox_adv_ui";
-            this.groupBox_adv_ui.Size = new System.Drawing.Size(452, 72);
+            this.groupBox_adv_ui.Size = new System.Drawing.Size(452, 95);
             this.groupBox_adv_ui.TabIndex = 1;
             this.groupBox_adv_ui.TabStop = false;
             this.groupBox_adv_ui.Text = "界面与辅助";
@@ -783,6 +785,17 @@ namespace VinXiangQi
             this.checkBox_show_floating_score.Text = "显示悬浮分数";
             this.checkBox_show_floating_score.UseVisualStyleBackColor = true;
             this.checkBox_show_floating_score.CheckedChanged += new System.EventHandler(this.checkBox_show_floating_score_CheckedChanged);
+            //
+            // checkBox_mimic_human
+            //
+            this.checkBox_mimic_human.AutoSize = true;
+            this.checkBox_mimic_human.Location = new System.Drawing.Point(24, 58);
+            this.checkBox_mimic_human.Name = "checkBox_mimic_human";
+            this.checkBox_mimic_human.Size = new System.Drawing.Size(99, 19);
+            this.checkBox_mimic_human.TabIndex = 6;
+            this.checkBox_mimic_human.Text = "模仿人类";
+            this.checkBox_mimic_human.UseVisualStyleBackColor = true;
+            this.checkBox_mimic_human.CheckedChanged += new System.EventHandler(this.checkBox_mimic_human_CheckedChanged);
             //
             // openFileDialog_engine
             //
@@ -910,5 +923,6 @@ namespace VinXiangQi
         private System.Windows.Forms.Label label_score_unit;
         private System.Windows.Forms.CheckBox checkBox_auto_click;
         private System.Windows.Forms.CheckBox checkBox_show_floating_score;
+        private System.Windows.Forms.CheckBox checkBox_mimic_human;
     }
 }

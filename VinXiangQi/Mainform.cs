@@ -144,10 +144,17 @@ namespace VinXiangQi
         public static string MODEL_FOLDER = @".\Models\";
         public static string OPENBOOK_FOLDER = @".\OpenBooks\";
         public static string SOLUTION_FOLDER = @".\Solutions\";
+        public static string ENGINE_FOLDER = @".\Engines\";
         // 是否开始连线
         public static bool DetectEnabled = false;
-        // 自动点击的图片
+        // 自动点击的图片(按语义角色分类)
+        // 旧的单列表保留为向后兼容：若方案目录下只有平级 AutoClick 图而无 Close/Confirm
+        // 子目录，则全部当作 Close 类加载。AutoClickLoop 优先用 Close/Confirm 两列表。
         public static List<Bitmap> AutoClickImageList = new List<Bitmap>();
+        // 关闭类：红叉/"不需要"/"取消"等，点了让上层弹窗消失。处理时最高优先级。
+        public static List<Bitmap> AutoClickCloseList = new List<Bitmap>();
+        // 确认类："再来一局"/"开始下一盘"等，点了开始新局。仅在无关闭类弹窗时处理。
+        public static List<Bitmap> AutoClickConfirmList = new List<Bitmap>();
         public static Random Rand = new Random();
 
         public class Solution
@@ -538,6 +545,7 @@ namespace VinXiangQi
                 this.Text = $"Vin象棋 {Version}";
                 InitFolders();
                 LoadSettings();
+                EnsureDefaultEngine();
                 InitOpenBooks();
                 InitYoloModels();
                 InitSolutions();
@@ -552,8 +560,19 @@ namespace VinXiangQi
                 checkBox_two_steps.Checked = ShowTwoSteps;
                 if (Settings.WindowX >= 0 && Settings.WindowY >= 0)
                 {
-                    this.StartPosition = FormStartPosition.Manual;
-                    this.Location = new Point(Settings.WindowX, Settings.WindowY);
+                    // 坐标合法性检查：换显示器/分辨率后，保存的窗口坐标可能跑到屏幕外，
+                    // 导致用户看不到窗口。落在任意一个屏幕工作区内才采用，否则用系统默认居中。
+                    Point saved = new Point(Settings.WindowX, Settings.WindowY);
+                    bool onScreen = false;
+                    foreach (var scr in Screen.AllScreens)
+                    {
+                        if (scr.WorkingArea.Contains(saved)) { onScreen = true; break; }
+                    }
+                    if (onScreen)
+                    {
+                        this.StartPosition = FormStartPosition.Manual;
+                        this.Location = saved;
+                    }
                 }
             }
             catch (Exception ex)
@@ -732,6 +751,12 @@ namespace VinXiangQi
             {
                 Directory.CreateDirectory(OPENBOOK_FOLDER);
             }
+            // Engines 目录：交付包内置 pikafish 等引擎。确保目录存在，供
+            // EnsureDefaultEngine 扫描和用户手动放置引擎使用。
+            if (!Directory.Exists(ENGINE_FOLDER))
+            {
+                Directory.CreateDirectory(ENGINE_FOLDER);
+            }
         }
 
         public static void InitOpenBooks()
@@ -863,6 +888,106 @@ namespace VinXiangQi
             RenderDisplayBoard();
         }
 
+        // 引擎健康检查：确保 settings 里至少有一个能找到的引擎。
+        // 修复"交付即失败"——交付包内置 pikafish，但用户的 settings.json 可能：
+        // 1) 为空(首次启动)；2) 指向开发机外部路径(换机器后失效)；3) 用户误删。
+        // 本方法扫描 Engines\ 目录，把找到的引擎(pikafish 优先)自动注册进 EngineList，
+        // 并在 SelectedEngine 失效时自动切到可用的引擎。用户无感，开箱即用。
+        // 调用时机：LoadSettings 之后、InitEngine 之前。
+        void EnsureDefaultEngine()
+        {
+            try
+            {
+                // 收集 Engines\ 目录下所有 .exe，pikafish 优先排序
+                List<string> engineFiles = new List<string>();
+                if (Directory.Exists(ENGINE_FOLDER))
+                {
+                    string[] exes = Directory.GetFiles(ENGINE_FOLDER, "*.exe", SearchOption.TopDirectoryOnly);
+                    // pikafish 排前面(默认推荐引擎)，其余按文件名
+                    var ordered = exes.OrderBy(f => f.ToLower().Contains("pikafish") ? 0 : 1).ThenBy(f => f);
+                    engineFiles.AddRange(ordered);
+                }
+                bool autoChanged = false;
+                // 清理 EngineList 里文件不存在的旧条目(开发机外部路径等失效配置)
+                // 但保留用户通过界面手动添加的、虽暂时找不到的条目？为稳妥，只清理"明显失效"的：
+                // 路径不在 Engines\ 下且文件不存在的。Engines\ 下的即使暂时找不到也保留。
+                var deadKeys = new List<string>();
+                foreach (var kv in Settings.EngineList)
+                {
+                    string abs = Utils.ToAbsolutePath(kv.Value.ExePath);
+                    if (!File.Exists(abs))
+                    {
+                        // 不在 Engines 目录下且文件不存在 → 开发机残留，清理
+                        bool underEngines = abs.StartsWith(Utils.ToAbsolutePath(ENGINE_FOLDER), StringComparison.OrdinalIgnoreCase);
+                        if (!underEngines) deadKeys.Add(kv.Key);
+                    }
+                }
+                foreach (var k in deadKeys)
+                {
+                    Settings.EngineList.Remove(k);
+                    autoChanged = true;
+                    LogHelper.Info("[EnsureDefaultEngine] 清理失效引擎配置: " + k);
+                }
+                // 把 Engines\ 里有、但还没注册进 EngineList 的引擎补进去
+                foreach (string file in engineFiles)
+                {
+                    string abs = Path.GetFullPath(file);
+                    string rel = Utils.ToRelativePath(abs);
+                    bool alreadyRegistered = false;
+                    foreach (var kv in Settings.EngineList)
+                    {
+                        if (string.Equals(Utils.ToAbsolutePath(kv.Value.ExePath), abs, StringComparison.OrdinalIgnoreCase))
+                        {
+                            alreadyRegistered = true;
+                            break;
+                        }
+                    }
+                    if (!alreadyRegistered)
+                    {
+                        string name = Path.GetFileNameWithoutExtension(file);
+                        // 避免重名
+                        string uniqueName = name;
+                        int suffix = 1;
+                        while (Settings.EngineList.ContainsKey(uniqueName))
+                        {
+                            uniqueName = name + "_" + suffix;
+                            suffix++;
+                        }
+                        var es = new EngineSettings();
+                        es.ExePath = rel;
+                        es.Name = uniqueName;
+                        es.Configs["Threads"] = "4";
+                        Settings.EngineList[uniqueName] = es;
+                        autoChanged = true;
+                        LogHelper.Info("[EnsureDefaultEngine] 自动注册引擎: " + uniqueName + " -> " + rel);
+                    }
+                }
+                // SelectedEngine 失效时，自动切到第一个能找到的引擎
+                bool selectedOk = Settings.SelectedEngine.Length > 0
+                    && Settings.EngineList.ContainsKey(Settings.SelectedEngine)
+                    && File.Exists(Utils.ToAbsolutePath(Settings.EngineList[Settings.SelectedEngine].ExePath));
+                if (!selectedOk && Settings.EngineList.Count > 0)
+                {
+                    // 选第一个文件存在的引擎(EngineList 已按 pikafish 优先注册)
+                    foreach (var kv in Settings.EngineList)
+                    {
+                        if (File.Exists(Utils.ToAbsolutePath(kv.Value.ExePath)))
+                        {
+                            Settings.SelectedEngine = kv.Key;
+                            autoChanged = true;
+                            LogHelper.Info("[EnsureDefaultEngine] 自动切换 SelectedEngine 到: " + kv.Key);
+                            break;
+                        }
+                    }
+                }
+                if (autoChanged) SaveSettings();
+            }
+            catch (Exception ex)
+            {
+                LogHelper.Error(ex, "EnsureDefaultEngine");
+            }
+        }
+
         public void InitEngine()
         {
             if (Engine != null)
@@ -889,8 +1014,35 @@ namespace VinXiangQi
                     Engine.Init();
                     try { Engine.SetOption("MultiPV", "3"); } catch (Exception ex) { LogHelper.Warn("设置 MultiPV 失败(引擎可能不支持): " + ex.Message); }
                 }
-
+                else
+                {
+                    // 引擎文件不存在：EnsureDefaultEngine 未能自动恢复，给用户明确人话提示。
+                    // 不再静默跳过(旧版表现为"软件能开但不下棋"，用户无法排查)。
+                    ShowEngineMissingPrompt(engineSettings.ExePath);
+                }
             }
+            else
+            {
+                // 没有选中任何引擎：EngineList 为空，提示用户放置引擎。
+                ShowEngineMissingPrompt("");
+            }
+        }
+
+        // 引擎缺失的统一人话提示。引导用户把 pikafish 放到 Engines\ 目录。
+        void ShowEngineMissingPrompt(string missingPath)
+        {
+            LogHelper.Warn("[InitEngine] 引擎未找到: " + (string.IsNullOrEmpty(missingPath) ? "(无选中引擎)" : missingPath));
+            string msg = "未找到可用的象棋引擎，软件暂时无法进行 AI 分析与自动下棋。\r\n\r\n";
+            if (!string.IsNullOrEmpty(missingPath))
+            {
+                msg += "配置的引擎路径：\r\n" + missingPath + "\r\n\r\n";
+            }
+            msg += "解决方法：\r\n";
+            msg += "1. 从 pikafish 官方下载引擎程序(pikafish-bmi2.exe 或 pikafish.exe)\r\n";
+            msg += "2. 把引擎 exe 放到软件目录下的 Engines\\ 文件夹\r\n";
+            msg += "3. 重启本软件(重启后会自动识别)\r\n\r\n";
+            msg += "软件目录：" + Utils.ToAbsolutePath(ENGINE_FOLDER);
+            try { MessageBox.Show(this, msg, "未找到象棋引擎", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
         }
 
         void ResetDetection()
@@ -927,6 +1079,8 @@ namespace VinXiangQi
             // 清空走法记录：上一局的着法在新局无意义，保留会误触发长打检测，
             // 同时保证棋谱导出只含本局着法
             BestMoveList.Clear();
+            // 长打局面计数跨局失效，清空避免新局误判
+            PositionRepeatCount.Clear();
         }
 
         void StartDetection(bool fromOpponent)
@@ -1143,39 +1297,75 @@ namespace VinXiangQi
                 }
 
                 string autoClickPath = @".\Solutions\" + Settings.SelectedSolution + @"\AutoClick";
-                if (Directory.Exists(autoClickPath))
-                {
-                    AutoClickImageList.Clear();
-                    foreach (var image in Directory.GetFiles(autoClickPath))
-                    {
-                        if (imgExtensions.Contains(image.Split('.').Last()))
-                        {
-                            Bitmap tmpImg = new Bitmap(image);
-                            Bitmap img = new Bitmap(tmpImg);
-                            tmpImg.Dispose();
-                            AutoClickImageList.Add(img);
-                        }
-                    }
-                }
+                LoadAutoClickImages(autoClickPath);
                 SaveSettings();
             }
             else if(Settings.SelectedSolution != "自定义方案")
             {
                 if (Directory.Exists(@".\Solutions\自定义方案") && Directory.Exists(@".\Solutions\自定义方案\AutoClick"))
                 {
-                    AutoClickImageList.Clear();
-                    foreach (var image in Directory.GetFiles(@".\Solutions\自定义方案\AutoClick"))
+                    LoadAutoClickImages(@".\Solutions\自定义方案\AutoClick");
+                }
+            }
+        }
+
+        // 加载自动点击模板，按 Close/Confirm 语义角色分类填充。
+        // 目录约定(跨平台通用)：
+        //   {autoClickPath}\Close\   关闭类(红叉/不需要/取消) —— 先处理
+        //   {autoClickPath}\Confirm\ 确认类(再来一局/开始下一盘) —— 仅在无关闭类时处理
+        // 向后兼容：若两个子目录都不存在，但 {autoClickPath} 下直接有图，则全部当作
+        // Close 类加载(旧部署行为不变)。每张图加载后自动抠背景为透明(MakeTransparentFromCorners)。
+        void LoadAutoClickImages(string autoClickPath)
+        {
+            string[] imgExtensions = new string[] { "png", "jpg", "bmp", "jpeg" };
+            AutoClickImageList.Clear();
+            AutoClickCloseList.Clear();
+            AutoClickConfirmList.Clear();
+
+            string closePath = Path.Combine(autoClickPath, "Close");
+            string confirmPath = Path.Combine(autoClickPath, "Confirm");
+            bool hasSubDirs = Directory.Exists(closePath) || Directory.Exists(confirmPath);
+
+            Action<string, List<Bitmap>> loadInto = (dir, list) =>
+            {
+                if (!Directory.Exists(dir)) return;
+                foreach (var image in Directory.GetFiles(dir))
+                {
+                    if (imgExtensions.Contains(image.Split('.').Last()))
                     {
-                        if (imgExtensions.Contains(image.Split('.').Last()))
+                        try
                         {
                             Bitmap tmpImg = new Bitmap(image);
-                            Bitmap img = new Bitmap(tmpImg);
+                            // 自动抠背景：实心背景截图会变成透明背景模板，
+                            // FindImageFromTop 只比对主体像素，叠加弹窗的半透明遮罩/阴影不再干扰匹配。
+                            Bitmap processed = ImageHelper.MakeTransparentFromCorners(tmpImg);
                             tmpImg.Dispose();
-                            AutoClickImageList.Add(img);
+                            list.Add(processed);
+                        }
+                        catch (Exception ex)
+                        {
+                            LogHelper.Error(ex, "LoadAutoClickImages 加载 " + image);
                         }
                     }
                 }
+            };
+
+            if (hasSubDirs)
+            {
+                loadInto(closePath, AutoClickCloseList);
+                loadInto(confirmPath, AutoClickConfirmList);
             }
+            else
+            {
+                // 向后兼容：旧目录无子目录，全部当 Close 类
+                loadInto(autoClickPath, AutoClickCloseList);
+            }
+            // 旧列表同步填充(Close+Confirm 合并)，兼容可能仍引用 AutoClickImageList 的旧代码
+            AutoClickImageList.AddRange(AutoClickCloseList);
+            AutoClickImageList.AddRange(AutoClickConfirmList);
+            LogHelper.Info("[LoadAutoClickImages] path=" + autoClickPath
+                + " hasSubDirs=" + hasSubDirs
+                + " Close=" + AutoClickCloseList.Count + " Confirm=" + AutoClickConfirmList.Count);
         }
 
         private void Mainform_FormClosing(object sender, FormClosingEventArgs e)
@@ -1376,23 +1566,26 @@ namespace VinXiangQi
             }
             if (MouseOnImage)
             {
-                int width = 40;
-                int height = 40;
-                int xoffset = width / 2;
-                int yoffset = height / 2;
+                // 点击命中交叉点：复用 RenderDisplayBoard 的同一套网格度量
+                // (GetBoardRenderMetrics)，保证"看到棋子在哪、点哪个就生效"。
+                // 旧实现用 width=40/xoffset=20 硬编码，与实际棋盘网格(44/居中)不一致，
+                // 点格子边缘会命中错误位置。这里改为找离鼠标最近的交叉点。
+                var m = GetBoardRenderMetrics();
                 Point pos = new Point(-1, -1);
+                int bestDist = m.Grid / 2 + 2; // 命中半径：半格+少量容差
                 for (int y = 0; y < 10; y++)
                 {
                     for (int x = 0; x < 9; x++)
                     {
-                        if (MousePositionOnImage.X >= x * width + xoffset && MousePositionOnImage.X <= x * width + xoffset + width &&
-                            MousePositionOnImage.Y >= y * height + yoffset && MousePositionOnImage.Y <= y * height + yoffset + height)
+                        int cx = m.OriginX + x * m.Grid;
+                        int cy = m.OriginY + y * m.Grid;
+                        int dist = Math.Max(Math.Abs(MousePositionOnImage.X - cx), Math.Abs(MousePositionOnImage.Y - cy));
+                        if (dist < bestDist)
                         {
+                            bestDist = dist;
                             pos = new Point(x, y);
-                            break;
                         }
                     }
-                    if (pos.X != -1) break;
                 }
                 if (pos.X != -1)
                 {

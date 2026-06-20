@@ -34,6 +34,15 @@ namespace VinXiangQi
         // 用于后台计算的预期棋盘
         public static string[,] PonderBoard = new string[9, 10];
         public static List<string> BestMoveList = new List<string>();
+        // 长打(长将/长捉)检测：记录"本方走完后局面"的出现次数。
+        // key = Utils.BoardLayoutKey(局面布局，不含走子方)；value = 该局面累计出现次数。
+        // 同一局面出现 >=3 次即判长打作负，禁掉导致重复的着法迫使变招。
+        // 关键：按"局面"而非"走法"判定——车在 b1b2↔b2b1 换着将军时走法虽变，
+        // 但每次形成的局面会重复，第3次即触发，能彻底解决"换招继续长将"。
+        // 新局/被吃子时清空(见 ReloadBoard 新局分支和吃子判定)。
+        public static Dictionary<string, int> PositionRepeatCount = new Dictionary<string, int>();
+        // 局面重复的阈值：同局面出现 >=3 次(即 PositionRepeatCount[key] 达到 3)判长打。
+        const int PositionRepeatLimit = 3;
         // 图片上方形的棋盘区域 x, y, width, height 包括棋盘的框框 一个扩展的范围
         Rectangle BoardArea = new Rectangle(-1, -1, -1, -1);
         // Yolo模型识别出的棋盘区域 x, y, width, height，因为可能送进模型的已经是裁切过的棋盘区域，所以该数值需要被还原为上方的BoardArea
@@ -73,22 +82,116 @@ namespace VinXiangQi
 
         // 自动续盘循环：截图 → 模板匹配 → 命中则点击。
         // 与 DetectionLoop / 引擎进程是独立线程，互不影响运算速度。
-        // 修复多图标场景失效：
+        // 两阶段处理(先关后确认)：解决了 JJ象棋"看视频领奖励"(红叉小弹窗)叠在
+        // "再来一局"(大按钮)上时卡死的问题。模板按角色分两类：
+        //   Close(关闭类:红叉/取消/不需要) —— 每轮优先处理，先关掉上层干扰弹窗
+        //   Confirm(确认类:再来一局/开始下一盘) —— 仅当没有任何 Close 弹窗时才点
+        // 这样叠加弹窗时一定先关上层再点下层，不会互相干扰。
         //   1) 命中即 break，下一轮用全新截图再找下一个按钮（旧代码命中后仍用旧截图
         //      继续匹配列表里的图，导致界面已变化时第二个图标识别不到）；
         //   2) 命中后进入 cooldown，等界面动画/弹窗切换稳定再继续；
         //   3) 放宽匹配阈值到 AutoClickThreshold，缓解渲染差异（缩放/抗锯齿/阴影）；
         //   4) 每轮截图用完即释放，避免全屏 Bitmap 内存泄漏。
+        //   5) 点击后验证：点完下一帧在原位置小范围重匹配，确认目标是否消失。
+        //      未消失说明点击无效(误匹配/没点中)，对该位置启动快速重试(2秒去重)
+        //      而非默认15秒去重，打破"点错一次锁死15秒"的死循环。
         const int AutoClickThreshold = 80;
         const int AutoClickCooldownMs = 1500;
         const int AutoClickIntervalMs = 2000;
-        // 同一位置的去重窗口：模板图在下棋界面可能误匹配到某固定区域，
-        // 限制同一坐标在窗口内只点一次，避免反复误点打断对局；
-        // 局间按钮被点掉后界面变化，下一轮是不同坐标或按钮消失，不受影响。
+        // 默认去重窗口：模板图在下棋界面可能误匹配到某固定区域，限制同一坐标在
+        // 窗口内只点一次，避免反复误点打断对局。局间按钮点掉后界面变化，下一轮是
+        // 不同坐标或按钮消失，不受影响。
         const int AutoClickDedupMs = 15000;
+        const int AutoClickRetryDedupMs = 2000; // 点击验证失败时，缩短到2秒快速重试
         const int AutoClickDedupTolerance = 10; // 坐标偏差小于此值视为同一位置
+        const int AutoClickMaxRetry = 4;        // 同一目标快速重试上限，超过则放弃该轮
+        // 点击后验证的重匹配范围：在点击位置周围 AutoClickVerifyMargin 像素内找模板
+        const int AutoClickVerifyMargin = 25;
+        // 点完等界面响应，再做验证截图
+        const int AutoClickVerifyDelayMs = 400;
         Point _lastAutoClickPos = new Point(-1, -1);
         DateTime _lastAutoClickTime = DateTime.MinValue;
+        // 自适应去重状态：上次点击的目标(用于验证)+快速重试计数
+        // _retryMode=true 时，该位置的去重窗口用 AutoClickRetryDedupMs 而非默认值
+        Point _pendingVerifyPos = new Point(-1, -1);
+        Size _pendingVerifySize = Size.Empty;
+        Bitmap _pendingVerifyTemplate = null;
+        int _pendingVerifyRetry = 0;
+
+        // 在 screen(相对游戏窗口的截图)里匹配某个模板列表，返回第一个命中结果。
+        // 列表内按面积升序(小图优先)。返回 hitImage/pos(左上角)；未命中 pos.X==-1。
+        void AutoClickFindMatch(Bitmap screen, List<Bitmap> images, out Bitmap hitImage, out Point pos)
+        {
+            hitImage = null;
+            pos = new Point(-1, -1);
+            if (images == null || images.Count == 0) return;
+            var ordered = images.OrderBy(img => img.Width * img.Height).ToArray();
+            foreach (Bitmap image in ordered)
+            {
+                Point p = ImageHelper.FindImageFromTop(screen, image, AutoClickThreshold);
+                if (p.X != -1)
+                {
+                    hitImage = image;
+                    pos = p;
+                    return;
+                }
+            }
+        }
+
+        // 点击后验证：在 clickPos 附近小范围重新找 template，找到了=未消失(点击无效)。
+        // 用限定区域(FindImageFromTop 的 startFindX/Y/deltaX/Y)避免全屏扫描，极快。
+        bool AutoClickTargetStillThere(Bitmap screen, Bitmap template, Point clickPos)
+        {
+            if (template == null) return false;
+            int sx = Math.Max(0, clickPos.X - AutoClickVerifyMargin);
+            int sy = Math.Max(0, clickPos.Y - AutoClickVerifyMargin);
+            int dx = template.Width + AutoClickVerifyMargin * 2;
+            int dy = template.Height + AutoClickVerifyMargin * 2;
+            Point p = ImageHelper.FindImageFromTop(screen, template, AutoClickThreshold, sx, sy, dx, dy);
+            return p.X != -1;
+        }
+
+        // 判断 clickPos 是否落在自身窗口(主窗体/浮动分数窗)内，避免误点关掉本程序。
+        // 注意坐标空间：AutoClickLoop 的 clickPos 是"相对游戏窗口截图"的坐标(0,0 是
+        // 游戏窗口左上角)，而 this.Bounds/_floatingScoreForm.Bounds 是屏幕坐标。
+        // 必须先把 clickPos 加上游戏窗口的屏幕位置转成屏幕坐标，再和自身窗口比较。
+        // 早期版本漏了这步转换，把"截图里的相对坐标"直接当屏幕坐标比较，导致游戏窗口
+        // 上方的"再来一局"按钮(相对坐标 y≈716)被误判成落在主窗体内，自动下一盘被永久跳过。
+        bool AutoClickHitSelf(Point clickPos)
+        {
+            try
+            {
+                Point screenPos = clickPos;
+                if (GameHandle != IntPtr.Zero)
+                {
+                    var winRect = ScreenshotHelper.GetWindowRectangle(GameHandle);
+                    screenPos = new Point(clickPos.X + winRect.X, clickPos.Y + winRect.Y);
+                }
+                if (this != null && !IsDisposed && IsHandleCreated && this.Bounds.Contains(screenPos))
+                    return true;
+                if (_floatingScoreForm != null && !_floatingScoreForm.IsDisposed
+                    && _floatingScoreForm.IsHandleCreated && _floatingScoreForm.Bounds.Contains(screenPos))
+                    return true;
+            }
+            catch
+            {
+                // 窗体关闭过程中访问 Bounds 可能抛异常，按"未命中自身"放行
+            }
+            return false;
+        }
+
+        // 判断 clickPos 是否被去重窗口拦截。_retryMode 期间用短去重(快速重试)。
+        bool AutoClickIsDedupBlocked(Point clickPos)
+        {
+            if (_lastAutoClickPos.X == -1) return false;
+            bool samePos = Math.Abs(clickPos.X - _lastAutoClickPos.X) <= AutoClickDedupTolerance
+                        && Math.Abs(clickPos.Y - _lastAutoClickPos.Y) <= AutoClickDedupTolerance;
+            if (!samePos) return false;
+            double elapsed = (DateTime.Now - _lastAutoClickTime).TotalMilliseconds;
+            // 快速重试模式(上次点击验证失败)用短窗口；否则用默认长窗口
+            int window = _pendingVerifyRetry > 0 ? AutoClickRetryDedupMs : AutoClickDedupMs;
+            return elapsed < window;
+        }
 
         void AutoClickLoop()
         {
@@ -105,37 +208,135 @@ namespace VinXiangQi
                     Bitmap screen = Screenshot();
                     try
                     {
-                        // 按"面积升序"匹配：上层小弹窗（如"×"关闭按钮，面积小）优先于
-                        // 底层大弹窗（如"再来一局"，面积大）。否则会因命中即 break，
-                        // 永远先点到大弹窗，而该优先处理的小弹窗被跳过，导致死循环卡住。
-                        var orderedImages = AutoClickImageList
-                            .OrderBy(img => img.Width * img.Height)
-                            .ToArray();
-                        foreach (Bitmap image in orderedImages)
+                        // —— 阶段A：优先处理关闭类(Close)弹窗 ——
+                        // 关掉"看视频领奖励"这类上层小弹窗，露出下层的"再来一局"。
+                        Bitmap closeHit = null;
+                        Point closePos;
+                        AutoClickFindMatch(screen, AutoClickCloseList, out closeHit, out closePos);
+
+                        if (closeHit != null)
                         {
-                            Point pos = ImageHelper.FindImageFromTop(screen, image, AutoClickThreshold);
-                            if (pos.X != -1)
+                            Point clickPos = new Point(closePos.X + closeHit.Width / 2, closePos.Y + closeHit.Height / 2);
+                            if (AutoClickIsDedupBlocked(clickPos))
                             {
-                                Point clickPos = new Point(pos.X + image.Width / 2, pos.Y + image.Height / 2);
-                                // 去重：同一位置在去重窗口内不重复点击。
-                                // 抑制下棋时模板误匹配导致的反复误点；局间按钮点掉后坐标变化，不受影响。
-                                bool isDuplicate = _lastAutoClickPos.X != -1
-                                    && Math.Abs(clickPos.X - _lastAutoClickPos.X) <= AutoClickDedupTolerance
-                                    && Math.Abs(clickPos.Y - _lastAutoClickPos.Y) <= AutoClickDedupTolerance
-                                    && (DateTime.Now - _lastAutoClickTime).TotalMilliseconds < AutoClickDedupMs;
-                                if (isDuplicate)
-                                {
-                                    LogHelper.Info("[AutoClickLoop] 命中但去重跳过(同位置短期内已点) " + image.Width + "x" + image.Height
-                                        + " @px" + clickPos.X + "," + clickPos.Y);
-                                    break;
-                                }
+                                LogHelper.Info("[AutoClickLoop][Close] 命中但去重跳过 "
+                                    + closeHit.Width + "x" + closeHit.Height + " @px" + clickPos.X + "," + clickPos.Y
+                                    + " retry=" + _pendingVerifyRetry);
+                            }
+                            else if (AutoClickHitSelf(clickPos))
+                            {
+                                LogHelper.Info("[AutoClickLoop][Close] 命中但跳过(落在自身窗口内) "
+                                    + closeHit.Width + "x" + closeHit.Height + " @px" + clickPos.X + "," + clickPos.Y);
+                            }
+                            else
+                            {
                                 MouseLeftClick(clickPos.X, clickPos.Y);
                                 _lastAutoClickPos = clickPos;
                                 _lastAutoClickTime = DateTime.Now;
-                                LogHelper.Info("[AutoClickLoop] 命中并点击 " + image.Width + "x" + image.Height
-                                    + " @px" + clickPos.X + "," + clickPos.Y);
+                                // 记录待验证目标，下一轮验证它是否消失
+                                _pendingVerifyPos = closePos;
+                                _pendingVerifySize = new Size(closeHit.Width, closeHit.Height);
+                                _pendingVerifyTemplate = closeHit;
+                                _pendingVerifyRetry = 0;
+                                LogHelper.Info("[AutoClickLoop][Close] 命中并点击 "
+                                    + closeHit.Width + "x" + closeHit.Height + " @px" + clickPos.X + "," + clickPos.Y);
                                 clicked = true;
-                                break; // 用全新截图找下一个，避免在旧截图上误判
+                            }
+                        }
+                        else
+                        {
+                            // —— 阶段B：无关闭类弹窗时，处理确认类(Confirm) ——
+                            Bitmap confirmHit = null;
+                            Point confirmPos;
+                            AutoClickFindMatch(screen, AutoClickConfirmList, out confirmHit, out confirmPos);
+                            if (confirmHit != null)
+                            {
+                                Point clickPos = new Point(confirmPos.X + confirmHit.Width / 2, confirmPos.Y + confirmHit.Height / 2);
+                                if (AutoClickIsDedupBlocked(clickPos))
+                                {
+                                    LogHelper.Info("[AutoClickLoop][Confirm] 命中但去重跳过 "
+                                        + confirmHit.Width + "x" + confirmHit.Height + " @px" + clickPos.X + "," + clickPos.Y
+                                        + " retry=" + _pendingVerifyRetry);
+                                }
+                                else if (AutoClickHitSelf(clickPos))
+                                {
+                                    LogHelper.Info("[AutoClickLoop][Confirm] 命中但跳过(落在自身窗口内) "
+                                        + confirmHit.Width + "x" + confirmHit.Height + " @px" + clickPos.X + "," + clickPos.Y);
+                                }
+                                else
+                                {
+                                    MouseLeftClick(clickPos.X, clickPos.Y);
+                                    _lastAutoClickPos = clickPos;
+                                    _lastAutoClickTime = DateTime.Now;
+                                    _pendingVerifyPos = confirmPos;
+                                    _pendingVerifySize = new Size(confirmHit.Width, confirmHit.Height);
+                                    _pendingVerifyTemplate = confirmHit;
+                                    _pendingVerifyRetry = 0;
+                                    LogHelper.Info("[AutoClickLoop][Confirm] 命中并点击 "
+                                        + confirmHit.Width + "x" + confirmHit.Height + " @px" + clickPos.X + "," + clickPos.Y);
+                                    clicked = true;
+                                }
+                            }
+                            else if (AutoClickImageList.Count > 0 && AutoClickCloseList.Count == 0 && AutoClickConfirmList.Count == 0)
+                            {
+                                // 向后兼容：旧部署只有平级 AutoClickImageList(无角色分类)，
+                                // 退回原始行为——按面积升序匹配，命中即点。
+                                Bitmap legacyHit = null;
+                                Point legacyPos;
+                                AutoClickFindMatch(screen, AutoClickImageList, out legacyHit, out legacyPos);
+                                if (legacyHit != null)
+                                {
+                                    Point clickPos = new Point(legacyPos.X + legacyHit.Width / 2, legacyPos.Y + legacyHit.Height / 2);
+                                    if (!AutoClickIsDedupBlocked(clickPos) && !AutoClickHitSelf(clickPos))
+                                    {
+                                        MouseLeftClick(clickPos.X, clickPos.Y);
+                                        _lastAutoClickPos = clickPos;
+                                        _lastAutoClickTime = DateTime.Now;
+                                        _pendingVerifyPos = legacyPos;
+                                        _pendingVerifySize = new Size(legacyHit.Width, legacyHit.Height);
+                                        _pendingVerifyTemplate = legacyHit;
+                                        _pendingVerifyRetry = 0;
+                                        LogHelper.Info("[AutoClickLoop][Legacy] 命中并点击 "
+                                            + legacyHit.Width + "x" + legacyHit.Height + " @px" + clickPos.X + "," + clickPos.Y);
+                                        clicked = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        // —— 点击后验证：上一轮若有待验证目标，检查它是否消失 ——
+                        if (_pendingVerifyTemplate != null && !clicked)
+                        {
+                            bool stillThere = AutoClickTargetStillThere(screen, _pendingVerifyTemplate, _pendingVerifyPos);
+                            if (stillThere)
+                            {
+                                _pendingVerifyRetry++;
+                                if (_pendingVerifyRetry <= AutoClickMaxRetry)
+                                {
+                                    // 目标还在=上次点击无效。_pendingVerifyRetry>0 会让下轮
+                                    // AutoClickIsDedupBlocked 改用 2 秒短窗口(AutoClickRetryDedupMs)，
+                                    // 该位置得以快速重试。这是打破"点错一次锁死15秒"死循环的关键。
+                                    LogHelper.Info("[AutoClickLoop][Verify] 目标未消失,缩短去重快速重试 retry="
+                                        + _pendingVerifyRetry + " @px" + _pendingVerifyPos.X + "," + _pendingVerifyPos.Y);
+                                }
+                                else
+                                {
+                                    // 超过重试上限，放弃该目标，清待验证状态，恢复正常去重
+                                    LogHelper.Info("[AutoClickLoop][Verify] 目标多次未消失,放弃重试 @px"
+                                        + _pendingVerifyPos.X + "," + _pendingVerifyPos.Y);
+                                    _pendingVerifyTemplate = null;
+                                    _pendingVerifyRetry = 0;
+                                }
+                            }
+                            else
+                            {
+                                // 目标消失=点击成功，清待验证状态
+                                if (_pendingVerifyRetry > 0)
+                                {
+                                    LogHelper.Info("[AutoClickLoop][Verify] 重试后目标消失(成功) retry=" + _pendingVerifyRetry);
+                                }
+                                _pendingVerifyTemplate = null;
+                                _pendingVerifyRetry = 0;
                             }
                         }
                     }
@@ -379,6 +580,40 @@ namespace VinXiangQi
             return _boardImageTrimmed;
         }
 
+        // 主窗示意棋盘的渲染度量：把裁剪后的 board.png 画进 400×440 位图后，
+        // 棋盘交叉点的真实像素坐标。旧代码假设格距=40、首交叉点=20，棋子整体偏左上、
+        // 越往右下累积偏移越大且纵向出框。
+        // 这里用实测精确值(probe2 工具，最小二乘拟合棋盘线)：
+        //   裁剪后 board.png(629×689)画进 400×440，棋盘首交叉点在 (27,27)、格距 43。
+        //   水平/垂直首线都是 27(棋盘左右上下留白对称，互证)，垂直拟合误差仅1px。
+        //   棋盘范围 X:27~371(8格×43=344)、Y:27~414(9格×43=387)，均在 400×440 内。
+        // 结果缓存。
+        struct BoardRenderMetrics
+        {
+            public int Grid;           // 交叉点间距(像素)
+            public int OriginX;        // 第一个(左上)交叉点 x
+            public int OriginY;        // 第一个(左上)交叉点 y
+            public int PieceSize;      // 棋子绘制尺寸(像素)
+            public int BoardImageWidth;  // 棋盘背景图画成的宽
+            public int BoardImageHeight; // 棋盘背景图画成的高
+        }
+        static BoardRenderMetrics? _boardMetricsCache;
+        static BoardRenderMetrics GetBoardRenderMetrics()
+        {
+            if (_boardMetricsCache.HasValue) return _boardMetricsCache.Value;
+            var m = new BoardRenderMetrics
+            {
+                Grid = 43,
+                OriginX = 27,
+                OriginY = 27,
+                PieceSize = 40,            // 棋子略小于格距(43)，留 3px 缝隙视觉清晰
+                BoardImageWidth = 400,     // 与 BoardDisplayBitmap 宽一致，棋盘图铺满
+                BoardImageHeight = 440     // 与 BoardDisplayBitmap 高一致
+            };
+            _boardMetricsCache = m;
+            return m;
+        }
+
         public void RenderDisplayBoard(string[,] renderBoard=null)
         {
             if (renderBoard == null) renderBoard = CurrentBoard;
@@ -387,10 +622,19 @@ namespace VinXiangQi
             if (IsDisposed || !IsHandleCreated) return;
             this.Invoke(new Action(() =>
             {
-                int width = 40;
-                int height = 40;
-                int xoffset = width / 2;
-                int yoffset = height / 2;
+                // 主窗示意棋盘的渲染坐标系，经实测校准（详见 GetBoardRenderMetrics）。
+                // 旧实现用 width=height=40 当格距又当棋子尺寸、xoffset=yoffset=20 当首格偏移，
+                // 但裁剪后的 board.png 被画进 400×440 后实际格距约 44px、首交叉点在 ~(22,21)，
+                // 旧参数导致棋子整体偏左上且越往右下累积偏移越多，棋子没落在格子正中。
+                // 这里改用真实测得的格距/原点，棋子按"中心对齐交叉点"绘制。
+                var m = GetBoardRenderMetrics();
+                int grid = m.Grid;          // 交叉点间距(像素)
+                int originX = m.OriginX;    // 第一个(左上)交叉点的 x
+                int originY = m.OriginY;    // 第一个(左上)交叉点的 y
+                int pieceW = m.PieceSize;   // 棋子绘制尺寸
+                int pieceHalf = pieceW / 2;
+                int boardImgW = m.BoardImageWidth;   // 棋盘背景图画成的宽
+                int boardImgH = m.BoardImageHeight;  // 棋盘背景图画成的高
                 // 用木色底代替白底：board.png 未铺满时露边，木色与棋盘浑然一体。
                 // 关键：用裁掉白边的棋盘图(GetTrimmedBoardImage)，board.png 原图四周带
                 // 不透明白边，直接画会把木色底盖掉形成白圈。裁剪后内容区画满，白圈消失。
@@ -398,7 +642,7 @@ namespace VinXiangQi
                 Bitmap boardImg = GetTrimmedBoardImage();
                 if (boardImg != null)
                 {
-                    BoardGDI.DrawImage(boardImg, 0, 0, width * 10, height * 11);
+                    BoardGDI.DrawImage(boardImg, 0, 0, boardImgW, boardImgH);
                 }
                 for (int y = 0; y < 10; y++)
                 {
@@ -410,45 +654,51 @@ namespace VinXiangQi
                             Bitmap pieceImg = GetPieceImage(cell);
                             if (pieceImg != null)
                             {
-                                BoardGDI.DrawImage(pieceImg, x * width + xoffset, y * height + yoffset, width, height);
+                                // 棋子中心对齐交叉点：左上角 = 交叉点 - 半径
+                                int px = originX + x * grid - pieceHalf;
+                                int py = originY + y * grid - pieceHalf;
+                                BoardGDI.DrawImage(pieceImg, px, py, pieceW, pieceW);
                             }
                         }
                     }
                 }
                 if (BestMove.From.X != -1)
                 {
-                    Point bestFrom = new Point(BestMove.From.X * width + xoffset + width / 2, BestMove.From.Y * height + yoffset + height / 2);
-                    Point bestTo = new Point(BestMove.To.X * width + xoffset + width / 2, BestMove.To.Y * height + yoffset + height / 2);
+                    Point bestFrom = new Point(originX + BestMove.From.X * grid, originY + BestMove.From.Y * grid);
+                    Point bestTo = new Point(originX + BestMove.To.X * grid, originY + BestMove.To.Y * grid);
                     BoardGDI.DrawLine(RedSide ? ArrowRedPen : ArrowBluePen, bestFrom, bestTo);
                 }
                 if (PonderMove.From.X != -1)
                 {
-                    Point ponderFrom = new Point(PonderMove.From.X * width + xoffset + width / 2, PonderMove.From.Y * height + yoffset + height / 2);
-                    Point ponderTo = new Point(PonderMove.To.X * width + xoffset + width / 2, PonderMove.To.Y * height + yoffset + height / 2);
+                    Point ponderFrom = new Point(originX + PonderMove.From.X * grid, originY + PonderMove.From.Y * grid);
+                    Point ponderTo = new Point(originX + PonderMove.To.X * grid, originY + PonderMove.To.Y * grid);
                     BoardGDI.DrawLine(RedSide ? ArrowBluePen : ArrowRedPen, ponderFrom, ponderTo);
                 }
                 if (ShowTwoSteps && Move3.From.X != -1)
                 {
-                    Point m3From = new Point(Move3.From.X * width + xoffset + width / 2, Move3.From.Y * height + yoffset + height / 2);
-                    Point m3To = new Point(Move3.To.X * width + xoffset + width / 2, Move3.To.Y * height + yoffset + height / 2);
+                    Point m3From = new Point(originX + Move3.From.X * grid, originY + Move3.From.Y * grid);
+                    Point m3To = new Point(originX + Move3.To.X * grid, originY + Move3.To.Y * grid);
                     BoardGDI.DrawLine(RedSide ? ArrowRedDimPen : ArrowBlueDimPen, m3From, m3To);
                 }
                 if (ShowTwoSteps && Move4.From.X != -1)
                 {
-                    Point m4From = new Point(Move4.From.X * width + xoffset + width / 2, Move4.From.Y * height + yoffset + height / 2);
-                    Point m4To = new Point(Move4.To.X * width + xoffset + width / 2, Move4.To.Y * height + yoffset + height / 2);
+                    Point m4From = new Point(originX + Move4.From.X * grid, originY + Move4.From.Y * grid);
+                    Point m4To = new Point(originX + Move4.To.X * grid, originY + Move4.To.Y * grid);
                     BoardGDI.DrawLine(RedSide ? ArrowBlueDimPen : ArrowRedDimPen, m4From, m4To);
                 }
                 if (BackgroundAnalysisMove.From.X != -1)
                 {
-                    Point bgFrom = new Point(BackgroundAnalysisMove.From.X * width + xoffset + width / 2, BackgroundAnalysisMove.From.Y * height + yoffset + height / 2);
-                    Point bgTo = new Point(BackgroundAnalysisMove.To.X * width + xoffset + width / 2, BackgroundAnalysisMove.To.Y * height + yoffset + height / 2);
+                    Point bgFrom = new Point(originX + BackgroundAnalysisMove.From.X * grid, originY + BackgroundAnalysisMove.From.Y * grid);
+                    Point bgTo = new Point(originX + BackgroundAnalysisMove.To.X * grid, originY + BackgroundAnalysisMove.To.Y * grid);
                     BoardGDI.DrawLine(RedSide ? ArrowRedDimPen : ArrowBlueDimPen, bgFrom, bgTo);
                 }
 
-                int barY = height * 11 - 12;
-                int barH = 10;
-                int barW = width * 10;
+                // 分数条：贴位图底端绘制。棋盘最下排棋子(y=9)底边在 originY+9*grid+pieceHalf
+                // = 27+387+20 = 434，旧值 barY=428 会压住下排棋子。改为贴底并减薄，
+                // barY=433/barH=7(占433~440)仅与最下排棋子底部约1px重叠，视觉不再挡棋子。
+                int barY = boardImgH - 7;
+                int barH = 7;
+                int barW = boardImgW;
                 int segW = barW / 10;
                 int midX = barW / 2;
                 BoardGDI.FillRectangle(Brushes.Red, 0, barY, midX, barH);
@@ -542,7 +792,9 @@ namespace VinXiangQi
                 // 才说明点击真的没生效，可以重试。若起点棋子已不在原位，说明点击其实已生效
                 // (棋子已移走)，只是当前帧棋盘变化未被确认——此时绝不能重试，否则会在对方
                 // 思考时反复点击本方棋子。
-                if (Settings.AutoGo && !ChangeDetectedAfterClick && IsExpectedMoveStillPending())
+                // 关键：模仿人类延时期间棋子还没动是正常的，绝不能误判为"落子失败"而抢先点击，
+                // 否则会绕过延时直接落子(导致节奏错乱)，并被人为干预检测误判放弃本次落子。
+                if (Settings.AutoGo && !ChangeDetectedAfterClick && IsExpectedMoveStillPending() && !_mimicDelaying)
                 {
                     AutoGoFailingCheckCount++;
                     if (AutoGoFailingCheckCount >= 5)
@@ -789,32 +1041,58 @@ namespace VinXiangQi
             {
               try
               {
-                // 长打(长将/长捉)检测。
-                // BestMoveList 只记录本方着法(每次决策在 ReceiveBestMove 里 Add 一次)，故入口处
-                // List[-1] 即"上一步本方刚走的着法"。中国象棋 3 次重复局面即判负，因此第 3 次
-                // 准备走同一招时就该干预——原阈值 Count>=6 要等走到第 7 次才管，是"超过四次还
-                // 在重复"的直接原因。
-                // - List[-1]==List[-2]：连续两步走同一招(如车一直将军，单招长将)
-                // - List[-1]==List[-3]：交替重复(如 h2e2→h2h8→h2e2，换一种将军法继续长将)
-                // 两种都判定为重复，本次禁掉 List[-1] 这一招，迫使引擎变招。
-                // 注意：只禁单招(Engine.BanMoves = lastMove)。多招 banmoves(a b c)很多引擎
-                // 不认，且禁招过多时引擎会返回 bestmove (none)→ ReceiveBestMove 因长度!=4
-                // 直接 return 不点击，程序卡死停住。单招禁招所有引擎都兼容。
+                // 长打(长将/长捉)检测 —— 基于"局面重复"而非"走法重复"。
+                // 中国象棋规则：同一局面(双方棋子布局完全一致)重复 3 次即判长打作负。
+                // 关键优势：按局面判定能解决"换着将军"——车在 b1b2↔b2b1 反复将军时走法虽变，
+                // 但每次形成的局面会重复，第 3 次即触发禁招，引擎无法再用任何招回到重复局面。
+                // 局面计数在 ReceiveBestMove 里(本方确定走某招后)记录，此处是下一次分析时检测。
+                // 检测对象：PositionRepeatCount 里计数已达阈值的局面，把"导致该重复局面的着法"禁掉。
                 bool repetitionDetected = false;
-                if (BestMoveList.Count >= 2)
+                if (BestMoveList.Count >= 1)
                 {
                     string lastMove = BestMoveList[BestMoveList.Count - 1];
-                    bool isRepeat = lastMove == BestMoveList[BestMoveList.Count - 2];
-                    if (!isRepeat && BestMoveList.Count >= 3)
+                    // 兼容保留：纯走法连续重复(单招长将)也立即判定，更激进地止损
+                    bool moveRepeat = false;
+                    if (BestMoveList.Count >= 2)
                     {
-                        isRepeat = lastMove == BestMoveList[BestMoveList.Count - 3];
+                        moveRepeat = lastMove == BestMoveList[BestMoveList.Count - 2];
+                        if (!moveRepeat && BestMoveList.Count >= 3)
+                        {
+                            moveRepeat = lastMove == BestMoveList[BestMoveList.Count - 3];
+                        }
                     }
-                    if (isRepeat)
+                    // 局面重复判定：当前本方走完后的预期局面(ExpectedSelfGoBoard)是否已重复
+                    bool positionRepeat = false;
+                    string layoutKey = Utils.BoardLayoutKey(ExpectedSelfGoBoard);
+                    if (!string.IsNullOrEmpty(layoutKey)
+                        && PositionRepeatCount.ContainsKey(layoutKey)
+                        && PositionRepeatCount[layoutKey] >= PositionRepeatLimit)
                     {
-                        Engine.BanMoves = lastMove;
+                        positionRepeat = true;
+                    }
+                    if (moveRepeat || positionRepeat)
+                    {
+                        // 禁招升级：局面重复时，把本方最近用过的、可能回到重复局面的着法都禁掉。
+                        // 取最近若干步本方着法去重后作为 banmoves，迫使引擎真正变招。
+                        // SendCommand("banmoves " + BanMoves) 是字符串拼接，可发多招(空格分隔)；
+                        // 若引擎只认单招会退化为忽略，不比现状差。
+                        var recentMoves = new HashSet<string>();
+                        int lookBack = Math.Min(BestMoveList.Count, 4);
+                        for (int i = BestMoveList.Count - lookBack; i < BestMoveList.Count; i++)
+                        {
+                            if (!string.IsNullOrEmpty(BestMoveList[i]) && BestMoveList[i].Length == 4)
+                            {
+                                recentMoves.Add(BestMoveList[i]);
+                            }
+                        }
+                        string banStr = string.Join(" ", recentMoves);
+                        Engine.BanMoves = banStr;
                         repetitionDetected = true;
-                        DisplayStatus("检测到长打，禁招: " + lastMove + " 迫使变招");
-                        LogHelper.Info("[StartAnalyze] 检测到长打，禁招: " + lastMove);
+                        DisplayStatus("检测到长打(局面重复)，禁招: " + banStr + " 迫使变招");
+                        LogHelper.Info("[StartAnalyze] 检测到长打 moveRepeat=" + moveRepeat
+                            + " positionRepeat=" + positionRepeat + " count="
+                            + (PositionRepeatCount.ContainsKey(layoutKey) ? PositionRepeatCount[layoutKey].ToString() : "0")
+                            + " 禁招: " + banStr);
                     }
                 }
                 // 长打时必须走引擎：开局库/云库命中后会直接 return，根本不会发 banmoves，
@@ -967,10 +1245,20 @@ namespace VinXiangQi
                 // 新局清空：上一局的走法序列在新局无意义，不清会导致新局第一手就被
                 // 误判为"重复"触发禁招，同时修复棋谱导出跨局污染的问题。
                 BestMoveList.Clear();
+                // 长打局面计数同样跨局失效，必须清空，否则新局会沿用上局的重复计数误判。
+                PositionRepeatCount.Clear();
             }
             string opponentSymbol =RedSide ? "b_" : "r_";
             string mySymbol = RedSide ? "r_" : "b_";
             Debug.WriteLine($"Diff Result: {compareWithLast.DiffCount} R: {compareWithLast.RedDiff} B: {compareWithLast.BlackDiff}");
+            // 长打局面计数：吃子(任一方棋子减少)时清空。
+            // 吃子后棋盘布局必然改变，之前的局面不可能再重复；清空避免计数字典无限膨胀，
+            // 也防止极端边界误判。非新局(RedDiff<0/BlackDiff<0 是棋子变多的新局，上面已处理)。
+            // 仅当确实有棋子被吃(RedDiff>0 或 BlackDiff>0)时清空。
+            if (compareWithLast.RedDiff > 0 || compareWithLast.BlackDiff > 0)
+            {
+                if (PositionRepeatCount.Count > 0) PositionRepeatCount.Clear();
+            }
             string startingFen = "rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR";
             string currentFen = Utils.BoardToFen(CurrentBoard, RedSide ? "w" : "b", RedSide ? "w" : "b");
             if (currentFen.StartsWith(startingFen) && !RedSide)
@@ -1442,28 +1730,64 @@ namespace VinXiangQi
 
             if (Settings.AutoGo && EngineAnalyzingBoard[fromPoint.X, fromPoint.Y] != null && EngineAnalyzingBoard[fromPoint.X, fromPoint.Y].StartsWith(mySideStr + "_"))
             {
-                LogHelper.Info("[ReceiveBestMove] 通过AutoGo守卫，执行点击 bestMove=" + bestMove + " source=" + source);
-                if (source == ResultSource.ChessDB || source == ResultSource.Openbook)
+                // 防重保护：避免同一局面(fen)下同一走法在短期内被反复点击。
+                // 触发场景：开局库/云库/引擎对"本方走完后对方没动"的同一局面反复返回同一招，
+                // 而 AutoGo 守卫只检查"起点是本方棋子"，不检查"这招刚走过"，于是每秒点一次
+                // 同一招停不下来(对方读秒时尤为明显)。这里用 fen+move 作 key，窗口内只点一次。
+                // 正常的"同招不同回合"(对方已走、局面已变 → fen 变)不受影响，不会被误杀。
+                // 窗口设 8 秒：覆盖开局库 MinTimeUsingOpenbook 等延迟，又不至于卡住正常重走。
+                string dedupKey = fen + "|" + bestMove;
+                bool isRepeat = _lastAutoGoKey == dedupKey
+                    && (DateTime.Now - _lastAutoGoTime).TotalSeconds < 8;
+                if (isRepeat)
                 {
-                    if (Settings.MinTimeUsingOpenbook > 0)
-                    {
-                        Thread.Sleep((int)(Settings.MinTimeUsingOpenbook * 1000));
-                    }
+                    LogHelper.Info("[ReceiveBestMove] 本局面同一着法短期内已点击，跳过 bestMove=" + bestMove + " fen=" + fen);
                 }
-                ChangeDetectedAfterClick = false;
-                PlayChess(bestMove);
-                if (Settings.BackgroundAnalysis && ponderMove != "" && !string.IsNullOrEmpty(fen) && source == ResultSource.Engine)
+                else
                 {
-                    PonderBoard = (string[,])ExpectedSelfGoBoard.Clone();
-                    PonderBoard[ponderTo.X, ponderTo.Y] = PonderBoard[ponderFrom.X, ponderFrom.Y];
-                    PonderBoard[ponderFrom.X, ponderFrom.Y] = null;
-                    string ponderFen = Utils.BoardToFen(PonderBoard, RedSide);
-                    EngineAnalyzingBoard = (string[,])PonderBoard.Clone();
-                    Engine.StartAnalyzePonder(ponderFen, Settings.EngineStepTime, Settings.EngineDepth);
-                    BackgroundAnalyzing = true;
+                    LogHelper.Info("[ReceiveBestMove] 通过AutoGo守卫，执行点击 bestMove=" + bestMove + " source=" + source);
+                    _lastAutoGoKey = dedupKey;
+                    _lastAutoGoTime = DateTime.Now;
+                    // 长打检测的记录点：本方确定要走这一招(已通过 AutoGo 守卫)，记录"本方走完后"
+                    // 的局面(ExpectedSelfGoBoard 已在上方 1649-1651 推算好)的出现次数。
+                    // 下次 StartAnalyze 入口会据此判定是否长打。注意此处只计数、不判定——
+                    // 判定在 StartAnalyze 入口，因为那时才轮到本方再次决策、需要决定是否禁招。
+                    if (ExpectedSelfGoBoard != null)
+                    {
+                        string lk = Utils.BoardLayoutKey(ExpectedSelfGoBoard);
+                        if (!string.IsNullOrEmpty(lk))
+                        {
+                            if (!PositionRepeatCount.ContainsKey(lk)) PositionRepeatCount[lk] = 0;
+                            PositionRepeatCount[lk]++;
+                        }
+                    }
+                    if (source == ResultSource.ChessDB || source == ResultSource.Openbook)
+                    {
+                        if (Settings.MinTimeUsingOpenbook > 0)
+                        {
+                            Thread.Sleep((int)(Settings.MinTimeUsingOpenbook * 1000));
+                        }
+                    }
+                    ChangeDetectedAfterClick = false;
+                    PlayChessWithMimicHumanDelay(bestMove);
+                    if (Settings.BackgroundAnalysis && ponderMove != "" && !string.IsNullOrEmpty(fen) && source == ResultSource.Engine)
+                    {
+                        PonderBoard = (string[,])ExpectedSelfGoBoard.Clone();
+                        PonderBoard[ponderTo.X, ponderTo.Y] = PonderBoard[ponderFrom.X, ponderFrom.Y];
+                        PonderBoard[ponderFrom.X, ponderFrom.Y] = null;
+                        string ponderFen = Utils.BoardToFen(PonderBoard, RedSide);
+                        EngineAnalyzingBoard = (string[,])PonderBoard.Clone();
+                        Engine.StartAnalyzePonder(ponderFen, Settings.EngineStepTime, Settings.EngineDepth);
+                        BackgroundAnalyzing = true;
+                    }
                 }
             }
         }
+
+        // ReceiveBestMove 的 AutoGo 防重状态：记录上一次实际点击的"局面+走法"，防止
+        // 对方未走时对同一局面反复点击同一招导致狂点。
+        string _lastAutoGoKey = "";
+        DateTime _lastAutoGoTime = DateTime.MinValue;
 
         private void Engine_BestMove_Event(string sourceFen, string bestMove, string ponderMove)
         {
@@ -1502,6 +1826,229 @@ namespace VinXiangQi
 
         const int MaxLogLines = 500;
         long _lastInfoInvokeTick;
+
+        // === 模仿人类：出招前插入难度自适应延时 ===
+        // 开启 Settings.MimicHuman 后，ReceiveBestMove 不再直接落子，而是先延时一段
+        // 随机时长（必然局面偏快、复杂局面偏慢，最长 15 秒）再落子，模拟真人思考节奏。
+        // 延时期间若棋盘被人为改动（棋手自己走了），则放弃本次落子，避免重复落子。
+        // 「立即出招」按钮可置位 _mimicAbortFlag 立即结束延时去落子。
+        // 这三个字段被 UI 线程(立即出招按钮)、DetectionLoop 线程(刷新棋盘)、
+        // 延时 Task 线程访问，用 volatile 保证可见性。
+        volatile bool _mimicDelaying = false;    // 当前是否处于模仿人类延时等待中
+        volatile bool _mimicAbortFlag = false;   // 外部请求立即结束延时(立即出招按钮)
+        string[,] _mimicBaselineBoard = null;    // 延时开始时的棋盘快照，用于检测人为干预
+
+        // 时快时慢：每步掷骰决定是否延时，制造"有时秒走、有时思考"的真人节奏。
+        // 硬约束：最近窗口内"走延时"的步数占比不得超过 35%（即至少 65% 的步直接快速走）。
+        // 用稍大的窗口(20 步)让 35% 比例统计稳定：20×35%=7，窗口内最多 7 步延时。
+        // 既不会延时过多(像在故意拖时间)，也保留足够的延时步让节奏有变化、不全是秒走。
+        // 仅在本次确实落子(跳过落子/延时完成落子)时才 push 记录，保证窗口反映"真实落子节奏"，
+        // 不被放弃落子(人为干预)污染统计。
+        const int MimicWindow = 20;              // 滑动窗口大小
+        const double MimicDelayRatioMax = 0.35;  // 延时步数占比硬上限 35%
+        // 窗口内允许的最大延时步数 = floor(20 × 0.35) = 7
+        const int MimicDelayCountCap = 7;
+        readonly Queue<bool> _mimicRecentDelayed = new Queue<bool>(); // 最近若干步是否走了延时(true=延时)
+        int _mimicRecentDelayCount = 0;         // _mimicRecentDelayed 中 true(延时)的个数，O(1) 计数
+
+        // 模仿人类延时常量（写死不暴露给设置）：
+        // baseShort=必然局面/强制招的下限延时；baseLong=复杂局面的常规上限延时；
+        // gapRange=用来衡量"必然程度"的参考分差(厘兵)，gap 达到/超过此值即视为完全必然。
+        // 硬上限(hardCap)设 8 秒而非 15 秒：用户最初说"最长不超过 15 秒"是天花板，
+        // 但实测带读秒的棋局(天天象棋单步限时 ~15-30s)，15 秒延时叠加算棋+等待对方，
+        // 单步总耗时极易超时判负。8 秒仍是"人类思考一步"的合理上限，又给算棋留足余量。
+        const int MimicDelayBaseShortMs = 800;
+        const int MimicDelayBaseLongMs = 6000;
+        const int MimicDelayHardCapMs = 8000;    // 硬上限：任何情况都不超过 8 秒
+        const int MimicDelayGapRange = 300;
+        const int MimicDelaySliceMs = 100;       // 分片 Sleep 粒度，便于及时响应中断
+        const int MimicInterfereCheckMs = 300;   // 人为干预检测周期(与 DetectionInterval 同量级)
+
+        // 决定本步是否走延时。返回 true=延时，false=跳过延时直接走。
+        // 硬约束：若窗口内延时步数已达上限(7/20=35%)，本步强制跳过(直接走)。
+        // 否则按概率掷骰：长期均值约 30%，留出余量使实际占比稳定贴在 35% 以下。
+        // 注意：此函数只"决定"，不"记录"。真正落子后由 RecordMimicStep 写入窗口。
+        bool ShouldDelayMimicThisStep()
+        {
+            // 窗口内延时步已达上限 → 本步必须直接走，不许再延时
+            if (_mimicRecentDelayCount >= MimicDelayCountCap)
+                return false;
+            // 窗口还没满时也按比例卡：已延时数 / 当前窗口大小 >= 35% 就停
+            int curWin = _mimicRecentDelayed.Count;
+            if (curWin > 0 && (double)_mimicRecentDelayCount / curWin >= MimicDelayRatioMax)
+                return false;
+            // 正常掷骰：均值约 30%，给 35% 上限留余量，避免频繁触发硬约束导致节奏僵硬
+            return Rand.NextDouble() < 0.30;
+        }
+
+        // 记录本步节奏(是否走了延时)，维护固定容量为 MimicWindow 的滑动窗口。
+        // 超出容量时弹出最旧的一项并相应调整计数。
+        void RecordMimicStep(bool delayed)
+        {
+            _mimicRecentDelayed.Enqueue(delayed);
+            if (delayed) _mimicRecentDelayCount++;
+            if (_mimicRecentDelayed.Count > MimicWindow)
+            {
+                bool old = _mimicRecentDelayed.Dequeue();
+                if (old) _mimicRecentDelayCount--;
+            }
+        }
+
+        // 依据当前候选分(CandidateScores)估算本手延时(毫秒)。
+        // 前 1~2 候选分差越大→局面越必然→延时越短；分差越小→选择越多→延时越长。
+        // 叠加 ±20% 随机抖动，使节奏更自然。最后硬钳到 15 秒。
+        int ComputeMimicHumanDelayMs()
+        {
+            // 取前两个有效候选分。开局库/云库路径下 CandidateScores 可能未填充(全 0)，
+            // 此时按"只有一招/信息不足"处理，走偏短延时，体验自然。
+            int s0 = CandidateScores.Length > 0 ? CandidateScores[0] : 0;
+            int s1 = CandidateScores.Length > 1 ? CandidateScores[1] : s0;
+            // 候选招未填(空串)时其分不可信，退化为单候选
+            if (CandidateMoves.Length < 2 || string.IsNullOrEmpty(CandidateMoves[1])) s1 = s0;
+            int gap = Math.Abs(s0 - s1);
+            // 归一化到 [0,1]：gap=0(选择最多)→1，gap>=gapRange(完全必然)→0
+            double norm = 1.0 - Math.Min(1.0, (double)gap / MimicDelayGapRange);
+            double delay = MimicDelayBaseShortMs + norm * (MimicDelayBaseLongMs - MimicDelayBaseShortMs);
+            // ±20% 随机抖动
+            double jitter = 1.0 + (Rand.NextDouble() * 0.4 - 0.2);
+            delay *= jitter;
+            int ms = (int)Math.Round(delay);
+            if (ms < MimicDelayBaseShortMs / 2) ms = MimicDelayBaseShortMs / 2; // 抖动后下限保护
+            if (ms > MimicDelayHardCapMs) ms = MimicDelayHardCapMs;             // 硬上限 15 秒
+            return ms;
+        }
+
+        // 模仿人类延时落子入口。不开 MimicHuman 时直接落子，行为与原先完全一致。
+        // 开启时整段放到 Task.Run，绝不阻塞 UI 线程（开局库/云库路径经 this.Invoke 跑在 UI 线程）。
+        async void PlayChessWithMimicHumanDelay(string move)
+        {
+            if (move == null || move.Length != 4) return;
+            if (!Settings.MimicHuman)
+            {
+                PlayChess(move);
+                return;
+            }
+            // 时快时慢：每步掷骰，硬约束"延时步数占比 ≤ 35%"，保证至少 65% 的步直接快速走，
+            // 其余走延时。制造真人"有时秒走、有时思考"的节奏，又不会延时过多像在故意拖时间。
+            // 跳过的步等于"按设置时间要求走"——引擎 EngineStepTime 算完即落，不再额外等。
+            if (!ShouldDelayMimicThisStep())
+            {
+                LogHelper.Info("[MimicHuman] 本步跳过延时，直接落子 move=" + move
+                    + " (窗口内已延时 " + _mimicRecentDelayCount + "/" + _mimicRecentDelayed.Count + ")");
+                RecordMimicStep(false);
+                PlayChess(move);
+                return;
+            }
+            int delayMs = ComputeMimicHumanDelayMs();
+            // 人为干预检测的基准棋盘：用延时开始那一刻的实时 PendingBoard 快照。
+            // 注意不能用 EngineAnalyzingBoard——它在某些 ReloadBoard 分支(和预期一样/己方变化跳过)
+            // 里不会更新，可能是上一手的过时分析快照，拿它比 PendingBoard 必然 DiffCount>0，
+            // 导致几乎每次延时都被误判为"人为干预"而放弃落子(实测日志全部放弃，无一落子)。
+            // 用实时 PendingBoard 快照作基准，延时期间只要盘面被改动(对方走/棋手手动走)即不一致。
+            _mimicBaselineBoard = PendingBoard != null
+                ? (string[,])PendingBoard.Clone()
+                : null;
+            _mimicAbortFlag = false;
+            _mimicDelaying = true;
+            _mimicInterfereStreak = 0; // 新一轮延时，重置连续命中计数
+            LogHelper.Info("[MimicHuman] 进入出招延时 " + delayMs + "ms move=" + move
+                + " (窗口内已延时 " + _mimicRecentDelayCount + "/" + _mimicRecentDelayed.Count + ")");
+            await Task.Run(new Action(() =>
+            {
+                try
+                {
+                    int waited = 0;
+                    int sinceCheck = 0;
+                    while (waited < delayMs && Running)
+                    {
+                        // 立即出招按钮置位 → 立即结束延时去落子
+                        if (_mimicAbortFlag)
+                        {
+                            LogHelper.Info("[MimicHuman] 被立即出招打断，剩余 " + (delayMs - waited) + "ms，立即落子");
+                            break;
+                        }
+                        Thread.Sleep(MimicDelaySliceMs);
+                        waited += MimicDelaySliceMs;
+                        sinceCheck += MimicDelaySliceMs;
+                        // 周期性检测人为干预：棋手在延时期间自己走了，棋盘已变 → 放弃本次落子
+                        if (sinceCheck >= MimicInterfereCheckMs)
+                        {
+                            sinceCheck = 0;
+                            if (HumanInterferedDuringDelay())
+                            {
+                                LogHelper.Info("[MimicHuman] 延时期间检测到棋盘被人为改动，放弃本次落子 move=" + move);
+                                _mimicDelaying = false;
+                                _mimicAbortFlag = false;
+                                return; // 注意：此处 return 只退出 Task，不落子，也不记入节奏窗口
+                            }
+                        }
+                    }
+                    // 延时结束：最后再核对一次未被人为改动，然后落子
+                    if (!Running)
+                    {
+                        _mimicDelaying = false;
+                        return;
+                    }
+                    if (HumanInterferedDuringDelay())
+                    {
+                        LogHelper.Info("[MimicHuman] 延时结束时检测到棋盘已变，放弃落子 move=" + move);
+                        _mimicDelaying = false;
+                        return;
+                    }
+                    _mimicDelaying = false;
+                    RecordMimicStep(true); // 这一步走了延时，记入窗口(delayed=true)
+                    PlayChess(move);
+                }
+                catch (Exception ex)
+                {
+                    _mimicDelaying = false;
+                    LogHelper.Error(ex, "PlayChessWithMimicHumanDelay");
+                }
+            }));
+        }
+
+        // 人为干预连续命中计数。PendingBoard 在动画/识别抖动时可能短暂出现 DiffCount>0，
+        // 单次判定会误报。要求连续两次检查都检测到变化才认定真被人为改动。
+        int _mimicInterfereStreak = 0;
+
+        // 判断延时期间棋盘是否被人为改动：基准快照(延时开始时的 PendingBoard)与实时 PendingBoard 比对。
+        // 一次正常走棋会让 DiffCount=2(起点清空+终点落子)，故以 DiffCount>=2 作为"盘面确实被动过"门槛，
+        // 过滤掉识别抖动(单格闪现)。再叠加连续 2 次命中确认，进一步防动画误报。
+        // 基准为空时保守返回 false（不阻断）。
+        bool HumanInterferedDuringDelay()
+        {
+            if (_mimicBaselineBoard == null || PendingBoard == null) return false;
+            try
+            {
+                var cmp = Utils.CompareBoard(_mimicBaselineBoard, PendingBoard);
+                if (cmp.DiffCount >= 2)
+                {
+                    _mimicInterfereStreak++;
+                    // 连续 2 次命中才认定，避免单帧识别抖动误判
+                    if (_mimicInterfereStreak >= 2)
+                    {
+                        _mimicInterfereStreak = 0;
+                        return true;
+                    }
+                    return false;
+                }
+                else
+                {
+                    _mimicInterfereStreak = 0;
+                    return false;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // 立即出招按钮调用：打断当前正在进行的模仿人类延时，立即落子。
+        public void AbortMimicHumanDelay()
+        {
+            if (_mimicDelaying) _mimicAbortFlag = true;
+        }
 
         void TrimEngineLog()
         {
