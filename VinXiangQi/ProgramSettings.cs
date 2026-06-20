@@ -37,7 +37,11 @@ namespace VinXiangQi
         public bool ShowFloatingScore = false;
         public int FloatingScoreX = -1;
         public int FloatingScoreY = -1;
-       
+        // 模仿人类：开启后每次确定着法后插入一段与难度自适应的随机延时再落子，
+        // 模拟真人思考节奏，避免像机器一样匀速出招。最长不超过 15 秒。
+        // 延时期间若检测到棋盘被人为改动，则放弃本次落子（防止重复落子）。
+        public bool MimicHuman = false;
+
         public enum OpenBookMode
         {
             HighestScore,

@@ -63,6 +63,7 @@ namespace VinXiangQi
             numericUpDown_stop_score.Value = (decimal)Mainform.Settings.StopScore;
             checkBox_auto_click.Checked = Mainform.Settings.AutoClick;
             checkBox_show_floating_score.Checked = Mainform.Settings.ShowFloatingScore;
+            checkBox_mimic_human.Checked = Mainform.Settings.MimicHuman;
         }
 
         // === 引擎设置事件 ===
@@ -316,9 +317,17 @@ namespace VinXiangQi
             Mainform.SaveSettings();
         }
 
+        private void checkBox_mimic_human_CheckedChanged(object sender, EventArgs e)
+        {
+            Mainform.Settings.MimicHuman = checkBox_mimic_human.Checked;
+            Mainform.SaveSettings();
+        }
+
         private void button_go_immediately_Click(object sender, EventArgs e)
         {
             if (Mainform.Engine != null) Mainform.Engine.StopAnalyze();
+            // 模仿人类延时阶段也要能一按即落，否则开了模仿人类后「立即出招」在延时期间会失效
+            _mainform.AbortMimicHumanDelay();
         }
 
         private void button_openbook_manage_Click(object sender, EventArgs e)
