@@ -498,5 +498,77 @@ namespace VinXiangQi
             return rbm;
         }
 
-    }
+    
+        /// <summary>
+        /// 自动抠背景：若四个角颜色接近（实心背景截图），把与边缘相连、且与背景色接近的像素
+        /// 设为全透明，返回新的 32bppArgb 位图（FindImageFromTop 会跳过 alpha=0 的像素）。
+        /// 四角颜色不一致，或抠完剩余主体过少时，原样返回一份 32bppArgb 拷贝。
+        /// 调用方负责释放传入的 src。
+        /// </summary>
+        public static Bitmap MakeTransparentFromCorners(Bitmap src, int tolerance = 30)
+        {
+            int w = src.Width, h = src.Height;
+            Bitmap dst = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(dst))
+            {
+                g.DrawImage(src, new Rectangle(0, 0, w, h));
+            }
+            if (w < 3 || h < 3) return dst;
+
+            BitmapData bd = dst.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+            try
+            {
+                int stride = bd.Stride;
+                byte[] px = new byte[stride * h];
+                Marshal.Copy(bd.Scan0, px, 0, px.Length);
+
+                int bgB = px[0], bgG = px[1], bgR = px[2];
+                Func<int, int, bool> nearBg = (x, y) =>
+                {
+                    int o = y * stride + x * 4;
+                    return Math.Abs(px[o] - bgB) + Math.Abs(px[o + 1] - bgG) + Math.Abs(px[o + 2] - bgR) <= tolerance;
+                };
+                // 四角都接近左上角颜色才认为是实心背景
+                if (!nearBg(w - 1, 0) || !nearBg(0, h - 1) || !nearBg(w - 1, h - 1)) return dst;
+
+                bool[] visited = new bool[w * h];
+                var queue = new Queue<int>();
+                Action<int, int> push = (x, y) =>
+                {
+                    int idx = y * w + x;
+                    if (visited[idx]) return;
+                    visited[idx] = true;
+                    if (nearBg(x, y)) queue.Enqueue(idx);
+                };
+                for (int x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+                for (int y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+
+                var cleared = new List<int>();
+                while (queue.Count > 0)
+                {
+                    int idx = queue.Dequeue();
+                    cleared.Add(idx);
+                    int cx = idx % w, cy = idx / w;
+                    if (cx > 0) push(cx - 1, cy);
+                    if (cx < w - 1) push(cx + 1, cy);
+                    if (cy > 0) push(cx, cy - 1);
+                    if (cy < h - 1) push(cx, cy + 1);
+                }
+
+                // 剩余主体不足 10% 说明模板几乎全是背景，抠掉反而会到处误匹配，放弃
+                if (w * h - cleared.Count < w * h / 10) return dst;
+                foreach (int idx in cleared)
+                {
+                    px[(idx / w) * stride + (idx % w) * 4 + 3] = 0;
+                }
+                Marshal.Copy(px, 0, bd.Scan0, px.Length);
+                return dst;
+            }
+            finally
+            {
+                dst.UnlockBits(bd);
+            }
+        }
+        }
+}
 }
