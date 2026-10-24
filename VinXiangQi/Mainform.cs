@@ -506,18 +506,12 @@ namespace VinXiangQi
         }
 
         // 主界面是无边框紧凑窗体，没有菜单栏。这里构建一个右键菜单挂到棋盘上，
-        // 既给"导出棋谱/关于/引擎管理/开局库管理"提供入口，也复活了原先
+        // 给"引擎管理/开局库管理/设置/诊断/版本"提供入口(识别开关、截图、导出棋谱用快捷键 F1/F3/F4/F5)，也复活了原先
         // 因菜单栏被移除而失效的 ToolStripMenuItem_*_Click 处理器。
         ContextMenuStrip _boardContextMenu;
         void InitContextMenu()
         {
             _boardContextMenu = new ContextMenuStrip();
-            _boardContextMenu.Items.Add("导出棋谱 (F5)", null, (s, e) => ExportGameRecord());
-            _boardContextMenu.Items.Add("-");
-            _boardContextMenu.Items.Add("开始识别 (F1)", null, (s, e) => StartDetection(false));
-            _boardContextMenu.Items.Add("停止识别 (F3)", null, (s, e) => button_stop_detection_Click(null, null));
-            _boardContextMenu.Items.Add("截图 (F4)", null, (s, e) => button_screenshot_Click(null, null));
-            _boardContextMenu.Items.Add("-");
             _boardContextMenu.Items.Add("引擎管理", null, (s, e) => ToolStripMenuItem_engine_management_Click(null, null));
             _boardContextMenu.Items.Add("开局库管理", null, (s, e) => ToolStripMenuItem_openbook_management_Click(null, null));
             _boardContextMenu.Items.Add("设置", null, (s, e) => button_settings_Click(null, null));
@@ -525,7 +519,7 @@ namespace VinXiangQi
             _boardContextMenu.Items.Add("打开日志文件夹", null, (s, e) => OpenLogFolder());
             _boardContextMenu.Items.Add("复制诊断信息", null, (s, e) => CopyDiagnostics());
             _boardContextMenu.Items.Add("检查更新", null, (s, e) => UpdateHelper.CheckForUpdates(this, false));
-            _boardContextMenu.Items.Add("关于", null, (s, e) => ToolStripMenuItem_about_Click(null, null));
+            _boardContextMenu.Items.Add("版本 v" + Version, null, (s, e) => ToolStripMenuItem_about_Click(null, null));
 
             pictureBox_board.ContextMenuStrip = _boardContextMenu;
             panel_right.ContextMenuStrip = _boardContextMenu;
