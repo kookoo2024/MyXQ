@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -94,7 +95,13 @@ namespace VinXiangQi
                 string json;
                 using (var wc = CreateClient())
                 {
-                    json = await wc.DownloadStringTaskAsync(api);
+                    var task = wc.DownloadStringTaskAsync(api);
+                    if (await Task.WhenAny(task, Task.Delay(20000)) != task)
+                    {
+                        try { wc.CancelAsync(); } catch { }
+                        throw new TimeoutException("连接 GitHub 超时（20 秒）");
+                    }
+                    json = await task;
                 }
                 var obj = JObject.Parse(json);
                 var info = new UpdateInfo
@@ -213,33 +220,55 @@ namespace VinXiangQi
             Directory.CreateDirectory(workDir);
             string zipPath = Path.Combine(workDir, "update.zip");
 
+            var urls = new List<string> { info.DownloadUrl };
+            if (!string.IsNullOrEmpty(info.Sha256) && Mainform.Settings.UpdateMirrors != null)
+            {
+                foreach (var m in Mainform.Settings.UpdateMirrors)
+                {
+                    string prefix = (m ?? "").Trim();
+                    if (prefix.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                        urls.Add(prefix.TrimEnd('/') + "/" + info.DownloadUrl);
+                }
+            }
+
             string oldTitle = owner.Text;
+            Exception lastError = null;
+            bool ok = false;
             try
             {
-                using (var wc = CreateClient())
+                for (int i = 0; i < urls.Count && !ok; i++)
                 {
-                    wc.Headers[HttpRequestHeader.Accept] = "application/octet-stream";
-                    wc.DownloadProgressChanged += (s, e) =>
+                    string url = urls[i];
+                    string label = i == 0 ? "" : "（备用线路" + i + "）";
+                    try
                     {
-                        try { owner.BeginInvoke(new Action(() => owner.Text = $"Vin象棋 正在下载更新 {e.ProgressPercentage}%")); } catch { }
-                    };
-                    await wc.DownloadFileTaskAsync(new Uri(info.DownloadUrl), zipPath);
+                        if (File.Exists(zipPath)) File.Delete(zipPath);
+                        LogHelper.Info("[Update] 下载 " + url);
+                        await DownloadWithStallTimeoutAsync(owner, url, zipPath, label, i == 0);
+                        var fi = new FileInfo(zipPath);
+                        if (!fi.Exists || (info.Size > 0 && fi.Length != info.Size))
+                            throw new Exception("下载的文件不完整");
+                        if (!string.IsNullOrEmpty(info.Sha256))
+                        {
+                            string actual = ComputeSha256(zipPath);
+                            if (actual != info.Sha256)
+                                throw new Exception("文件校验失败（SHA256 不一致）");
+                        }
+                        ok = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex;
+                        LogHelper.Warn("[Update] 线路失败 " + url + "：" + ex.Message);
+                    }
                 }
             }
             finally
             {
                 try { owner.Text = oldTitle; } catch { }
             }
-
-            var fi = new FileInfo(zipPath);
-            if (!fi.Exists || (info.Size > 0 && fi.Length != info.Size))
-                throw new Exception("下载的文件不完整，请重试。");
-            if (!string.IsNullOrEmpty(info.Sha256))
-            {
-                string actual = ComputeSha256(zipPath);
-                if (actual != info.Sha256)
-                    throw new Exception("文件校验失败（SHA256 不一致），已取消更新。");
-            }
+            if (!ok)
+                throw new Exception("下载更新失败（已尝试 " + urls.Count + " 条线路）：" + (lastError?.Message ?? "未知错误"));
 
             string exePath = Process.GetCurrentProcess().MainModule.FileName;
             string scriptPath = Path.Combine(workDir, "apply_update.ps1");
@@ -260,6 +289,46 @@ namespace VinXiangQi
 
             // 正常关闭：触发 FormClosing 保存设置、停止引擎
             owner.Close();
+        }
+
+        /// <summary>
+        /// 下载文件；超过 StallSeconds 秒没有任何进度就取消，好让调用方换线路。
+        /// </summary>
+        const int StallSeconds = 25;
+        static async Task DownloadWithStallTimeoutAsync(Mainform owner, string url, string path, string label, bool githubHeaders)
+        {
+            using (var wc = CreateClient())
+            {
+                if (githubHeaders)
+                    wc.Headers[HttpRequestHeader.Accept] = "application/octet-stream";
+                else
+                    wc.Headers.Remove(HttpRequestHeader.Accept);
+                DateTime lastProgress = DateTime.Now;
+                bool stalled = false;
+                wc.DownloadProgressChanged += (s, e) =>
+                {
+                    lastProgress = DateTime.Now;
+                    try { owner.BeginInvoke(new Action(() => owner.Text = $"Vin象棋 正在下载更新{label} {e.ProgressPercentage}%")); } catch { }
+                };
+                using (var timer = new System.Threading.Timer(_ =>
+                {
+                    if ((DateTime.Now - lastProgress).TotalSeconds > StallSeconds)
+                    {
+                        stalled = true;
+                        try { wc.CancelAsync(); } catch { }
+                    }
+                }, null, 1000, 1000))
+                {
+                    try
+                    {
+                        await wc.DownloadFileTaskAsync(new Uri(url), path);
+                    }
+                    catch (Exception) when (stalled)
+                    {
+                        throw new TimeoutException(StallSeconds + " 秒没有下载进度");
+                    }
+                }
+            }
         }
 
         static string PsQuote(string s)
