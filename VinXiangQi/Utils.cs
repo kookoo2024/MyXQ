@@ -676,5 +676,5 @@ namespace VinXiangQi
             }
             return any ? sb.ToString() : "";
         }
-}
+    }
 }

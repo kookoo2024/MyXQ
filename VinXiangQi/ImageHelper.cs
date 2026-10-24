@@ -498,7 +498,6 @@ namespace VinXiangQi
             return rbm;
         }
 
-    
         /// <summary>
         /// 自动抠背景：若四个角颜色接近（实心背景截图），把与边缘相连、且与背景色接近的像素
         /// 设为全透明，返回新的 32bppArgb 位图（FindImageFromTop 会跳过 alpha=0 的像素）。
@@ -570,5 +569,5 @@ namespace VinXiangQi
             }
         }
         }
-}
+    }
 }
