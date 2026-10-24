@@ -568,6 +568,5 @@ namespace VinXiangQi
                 dst.UnlockBits(bd);
             }
         }
-        }
     }
 }
