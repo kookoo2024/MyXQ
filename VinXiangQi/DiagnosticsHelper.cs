@@ -12,6 +12,9 @@ namespace VinXiangQi
     /// </summary>
     public partial class Mainform
     {
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+        static extern bool IsProcessorFeaturePresent(int feature);   // 40 = PF_AVX2_INSTRUCTIONS_AVAILABLE（Win10+）
+
         static string AppDir
         {
             get { return AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\'); }
@@ -57,6 +60,8 @@ namespace VinXiangQi
             add("版本", () => Version);
             add("系统", () => Environment.OSVersion + (Environment.Is64BitOperatingSystem ? " 64位" : " 32位"));
             add("进程", () => Environment.Is64BitProcess ? "64位" : "32位");
+            add("CPU", () => Environment.ProcessorCount + " 核，AVX2 " + (IsProcessorFeaturePresent(40) ? "支持" : "不支持"));
+            add("识别性能", () => InferenceStats);
             add("程序目录", () => AppDir);
             add("当前目录", () => Environment.CurrentDirectory);
             add("settings.json", () => File.Exists(Path.Combine(AppDir, "settings.json")) ? "存在" : "不存在");
