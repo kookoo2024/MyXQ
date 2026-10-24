@@ -23,7 +23,7 @@ jobs:
       - uses: NuGet/setup-nuget@v2
 
       - name: NuGet restore
-        run: nuget restore VinXiangQi.sln
+        run: nuget restore VinXiangQi.sln > restore.log 2>&1; $c=$LASTEXITCODE; Get-Content restore.log; exit $c
 
       - name: Check tag matches AssemblyVersion
         if: startsWith(github.ref, 'refs/tags/v')
@@ -35,7 +35,7 @@ jobs:
           if ($ver -ne $tag) { throw "标签 v$tag 与 AssemblyInfo.cs 中的版本 $ver 不一致，请先改版本号再打标签" }
 
       - name: Build
-        run: msbuild VinXiangQi.sln /m /p:Configuration=Release /p:Platform="Any CPU"
+        run: msbuild VinXiangQi.sln /m /p:Configuration=Release /p:Platform="Any CPU" "-flp:logfile=build.log;verbosity=minimal"
 
       - name: Package
         shell: pwsh
@@ -49,6 +49,20 @@ jobs:
           $name = if ('${{ github.ref_type }}' -eq 'tag') { 'VinXiangQi_${{ github.ref_name }}.zip' } else { 'VinXiangQi_build.zip' }
           Compress-Archive -Path "$pkg/*" -DestinationPath $name -Force
           "ZIP_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # 失败时把日志推到 ci-logs 分支，便于不登录网页也能查看
+      - name: Publish failure logs
+        if: failure()
+        shell: pwsh
+        run: |
+          git config user.name ci; git config user.email ci@users.noreply.github.com
+          $logs = Get-ChildItem -Path . -Include restore.log,build.log -Recurse -ErrorAction SilentlyContinue | Select-Object -First 2
+          git checkout --orphan ci-logs
+          git rm -rf --cached . | Out-Null
+          foreach ($l in $logs) { git add -f $l.FullName }
+          "run ${{ github.run_id }} sha ${{ github.sha }}" | Out-File info.txt; git add -f info.txt
+          git commit -m "ci logs ${{ github.run_id }}"
+          git push -f origin ci-logs
 
       - uses: actions/upload-artifact@v4
         with:
