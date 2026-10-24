@@ -72,24 +72,10 @@ jobs:
           name: VinXiangQi-${{ github.sha }}
           path: package/
 
-      # 发布到本仓库（私有，仅自己可下载备份）
-      - name: Release (this repo)
+      # 发布 Release，程序的在线更新从这里取（仓库须为公开）
+      - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.ZIP_NAME }}
           generate_release_notes: true
-
-      # 发布到公开的发布仓库，程序在线更新从这里取
-      # 需要在仓库 Settings → Secrets 里配置 RELEASE_TOKEN（对发布仓库有 contents 写权限的 PAT），
-      # 在 Settings → Variables 里配置 RELEASE_REPO（如 kookoo2024/MyXQ-releases）
-      - name: Release (public update repo)
-        if: startsWith(github.ref, 'refs/tags/v') && vars.RELEASE_REPO != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          repository: ${{ vars.RELEASE_REPO }}
-          token: ${{ secrets.RELEASE_TOKEN }}
-          tag_name: ${{ github.ref_name }}
-          files: ${{ env.ZIP_NAME }}
-          body: |
-            Vin象棋 ${{ github.ref_name }}

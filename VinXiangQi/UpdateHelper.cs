@@ -16,8 +16,8 @@ namespace VinXiangQi
     /// PowerShell 脚本在本程序退出后覆盖文件并重启。
     ///
     /// 约定：
-    /// - 发布源由 Settings.UpdateRepo 指定（"owner/repo"），必须是客户端能匿名访问的仓库；
-    ///   私有仓库的 Release 无法匿名下载。
+    /// - 发布源由 Settings.UpdateRepo 指定（"owner/repo"，默认 kookoo2024/MyXQ），
+    ///   必须是公开仓库；私有仓库的 Release 无法匿名下载。
     /// - Release 的 tag 形如 v1.5.0，附带一个 .zip 资源，内容为程序目录下要覆盖的文件。
     /// - 覆盖时只写入 zip 里有的文件，并强制跳过 settings.json，用户的配置、
     ///   方案、引擎、模型、开局库、日志都不受影响。

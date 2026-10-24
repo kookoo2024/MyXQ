@@ -43,7 +43,7 @@ namespace VinXiangQi
         public bool MimicHuman = false;
         // 在线更新：启动时自动检查；发布源为公开仓库 "owner/repo" 的 GitHub Releases
         public bool AutoCheckUpdate = true;
-        public string UpdateRepo = "kookoo2024/MyXQ-releases";
+        public string UpdateRepo = "kookoo2024/MyXQ";
         // 用户在提示框里选择“否”跳过的版本号，启动检查时不再提示该版本
         public string SkippedVersion = "";
 
