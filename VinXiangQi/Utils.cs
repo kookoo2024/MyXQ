@@ -653,5 +653,28 @@ namespace VinXiangQi
                 p = p.Substring(2);
             return p;
         }
+    
+        /// <summary>
+        /// 局面布局键：只编码棋子摆放（不含走子方），用于长打的局面重复计数。
+        /// 空棋盘或 null 返回空串。
+        /// </summary>
+        public static string BoardLayoutKey(string[,] board)
+        {
+            if (board == null) return "";
+            var sb = new StringBuilder(board.Length * 3);
+            bool any = false;
+            int w = board.GetLength(0), h = board.GetLength(1);
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    string c = board[x, y];
+                    if (!string.IsNullOrEmpty(c)) { sb.Append(c); any = true; }
+                    sb.Append(',');
+                }
+                sb.Append('/');
+            }
+            return any ? sb.ToString() : "";
+        }
     }
 }

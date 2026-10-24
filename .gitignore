@@ -13,3 +13,7 @@ VinXiangQi/settings.json
 # Windows 上误用保留设备名 nul 产生的垃圾空文件
 nul
 
+
+# 根目录本机配置与 AI 工具会话文件
+/settings.json
+.omo/

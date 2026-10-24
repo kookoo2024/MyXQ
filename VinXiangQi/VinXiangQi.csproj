@@ -194,6 +194,7 @@
     <Compile Include="SolutionSavingForm.Designer.cs">
       <DependentUpon>SolutionSavingForm.cs</DependentUpon>
     </Compile>
+    <Compile Include="UpdateHelper.cs" />
     <Compile Include="Utils.cs" />
     <Compile Include="YoloXiangQiModel.cs" />
     <EmbeddedResource Include="AboutForm.resx">

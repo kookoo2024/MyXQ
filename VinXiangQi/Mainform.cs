@@ -522,6 +522,7 @@ namespace VinXiangQi
             _boardContextMenu.Items.Add("开局库管理", null, (s, e) => ToolStripMenuItem_openbook_management_Click(null, null));
             _boardContextMenu.Items.Add("设置", null, (s, e) => button_settings_Click(null, null));
             _boardContextMenu.Items.Add("-");
+            _boardContextMenu.Items.Add("检查更新", null, (s, e) => UpdateHelper.CheckForUpdates(this, false));
             _boardContextMenu.Items.Add("关于", null, (s, e) => ToolStripMenuItem_about_Click(null, null));
 
             pictureBox_board.ContextMenuStrip = _boardContextMenu;
@@ -587,6 +588,11 @@ namespace VinXiangQi
         private void Mainform_Shown(object sender, EventArgs e)
         {
             LayoutRightPanel();
+            // 启动后静默检查更新：无新版本或网络失败时不打扰
+            if (Settings.AutoCheckUpdate)
+            {
+                UpdateHelper.CheckForUpdates(this, true);
+            }
         }
 
         // 木质棋盘风换肤：集中设置运行时外观属性。
