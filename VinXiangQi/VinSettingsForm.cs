@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -12,6 +12,7 @@ namespace VinXiangQi
         {
             InitializeComponent();
             _mainform = mainform;
+            AddEngineHelp();
             LoadSettings();
         }
 

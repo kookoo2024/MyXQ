@@ -1,4 +1,4 @@
-namespace VinXiangQi
+﻿namespace VinXiangQi
 {
     partial class VinSettingsForm
     {
@@ -369,7 +369,7 @@ namespace VinXiangQi
             this.groupBox_engine_calc.Controls.Add(this.numericUpDown_engine_depth);
             this.groupBox_engine_calc.Location = new System.Drawing.Point(12, 84);
             this.groupBox_engine_calc.Name = "groupBox_engine_calc";
-            this.groupBox_engine_calc.Size = new System.Drawing.Size(452, 130);
+            this.groupBox_engine_calc.Size = new System.Drawing.Size(452, 62);
             this.groupBox_engine_calc.TabIndex = 1;
             this.groupBox_engine_calc.TabStop = false;
             this.groupBox_engine_calc.Text = "计算参数";
@@ -377,7 +377,7 @@ namespace VinXiangQi
             // label_thread
             //
             this.label_thread.AutoSize = true;
-            this.label_thread.Location = new System.Drawing.Point(24, 30);
+            this.label_thread.Location = new System.Drawing.Point(16, 28);
             this.label_thread.Name = "label_thread";
             this.label_thread.Size = new System.Drawing.Size(52, 15);
             this.label_thread.TabIndex = 4;
@@ -385,7 +385,7 @@ namespace VinXiangQi
             //
             // numericUpDown_thread_count
             //
-            this.numericUpDown_thread_count.Location = new System.Drawing.Point(100, 27);
+            this.numericUpDown_thread_count.Location = new System.Drawing.Point(72, 25);
             this.numericUpDown_thread_count.Maximum = new decimal(new int[] {
             128,
             0,
@@ -397,7 +397,7 @@ namespace VinXiangQi
             0,
             0});
             this.numericUpDown_thread_count.Name = "numericUpDown_thread_count";
-            this.numericUpDown_thread_count.Size = new System.Drawing.Size(90, 25);
+            this.numericUpDown_thread_count.Size = new System.Drawing.Size(60, 25);
             this.numericUpDown_thread_count.TabIndex = 5;
             this.numericUpDown_thread_count.Value = new decimal(new int[] {
             8,
@@ -409,7 +409,7 @@ namespace VinXiangQi
             // label_step_time
             //
             this.label_step_time.AutoSize = true;
-            this.label_step_time.Location = new System.Drawing.Point(24, 62);
+            this.label_step_time.Location = new System.Drawing.Point(152, 28);
             this.label_step_time.Name = "label_step_time";
             this.label_step_time.Size = new System.Drawing.Size(52, 15);
             this.label_step_time.TabIndex = 6;
@@ -423,7 +423,7 @@ namespace VinXiangQi
             0,
             0,
             65536});
-            this.numericUpDown_step_time.Location = new System.Drawing.Point(100, 59);
+            this.numericUpDown_step_time.Location = new System.Drawing.Point(212, 25);
             this.numericUpDown_step_time.Maximum = new decimal(new int[] {
             9999,
             0,
@@ -435,7 +435,7 @@ namespace VinXiangQi
             0,
             0});
             this.numericUpDown_step_time.Name = "numericUpDown_step_time";
-            this.numericUpDown_step_time.Size = new System.Drawing.Size(90, 25);
+            this.numericUpDown_step_time.Size = new System.Drawing.Size(70, 25);
             this.numericUpDown_step_time.TabIndex = 7;
             this.numericUpDown_step_time.Value = new decimal(new int[] {
             1,
@@ -447,7 +447,7 @@ namespace VinXiangQi
             // label_depth
             //
             this.label_depth.AutoSize = true;
-            this.label_depth.Location = new System.Drawing.Point(24, 94);
+            this.label_depth.Location = new System.Drawing.Point(300, 28);
             this.label_depth.Name = "label_depth";
             this.label_depth.Size = new System.Drawing.Size(67, 15);
             this.label_depth.TabIndex = 8;
@@ -455,7 +455,7 @@ namespace VinXiangQi
             //
             // numericUpDown_engine_depth
             //
-            this.numericUpDown_engine_depth.Location = new System.Drawing.Point(100, 91);
+            this.numericUpDown_engine_depth.Location = new System.Drawing.Point(370, 25);
             this.numericUpDown_engine_depth.Maximum = new decimal(new int[] {
             200,
             0,
@@ -467,7 +467,7 @@ namespace VinXiangQi
             0,
             0});
             this.numericUpDown_engine_depth.Name = "numericUpDown_engine_depth";
-            this.numericUpDown_engine_depth.Size = new System.Drawing.Size(90, 25);
+            this.numericUpDown_engine_depth.Size = new System.Drawing.Size(66, 25);
             this.numericUpDown_engine_depth.TabIndex = 9;
             this.numericUpDown_engine_depth.Value = new decimal(new int[] {
             200,
@@ -481,9 +481,9 @@ namespace VinXiangQi
             this.groupBox_engine_mode.Controls.Add(this.checkBox_auto_go);
             this.groupBox_engine_mode.Controls.Add(this.checkBox_analyze_mode);
             this.groupBox_engine_mode.Controls.Add(this.button_go_immediately);
-            this.groupBox_engine_mode.Location = new System.Drawing.Point(12, 224);
+            this.groupBox_engine_mode.Location = new System.Drawing.Point(12, 154);
             this.groupBox_engine_mode.Name = "groupBox_engine_mode";
-            this.groupBox_engine_mode.Size = new System.Drawing.Size(452, 100);
+            this.groupBox_engine_mode.Size = new System.Drawing.Size(452, 62);
             this.groupBox_engine_mode.TabIndex = 2;
             this.groupBox_engine_mode.TabStop = false;
             this.groupBox_engine_mode.Text = "模式";
@@ -493,7 +493,7 @@ namespace VinXiangQi
             this.checkBox_auto_go.AutoSize = true;
             this.checkBox_auto_go.Checked = true;
             this.checkBox_auto_go.CheckState = System.Windows.Forms.CheckState.Checked;
-            this.checkBox_auto_go.Location = new System.Drawing.Point(24, 32);
+            this.checkBox_auto_go.Location = new System.Drawing.Point(16, 28);
             this.checkBox_auto_go.Name = "checkBox_auto_go";
             this.checkBox_auto_go.Size = new System.Drawing.Size(89, 19);
             this.checkBox_auto_go.TabIndex = 10;
@@ -504,7 +504,7 @@ namespace VinXiangQi
             // checkBox_analyze_mode
             //
             this.checkBox_analyze_mode.AutoSize = true;
-            this.checkBox_analyze_mode.Location = new System.Drawing.Point(140, 32);
+            this.checkBox_analyze_mode.Location = new System.Drawing.Point(130, 28);
             this.checkBox_analyze_mode.Name = "checkBox_analyze_mode";
             this.checkBox_analyze_mode.Size = new System.Drawing.Size(89, 19);
             this.checkBox_analyze_mode.TabIndex = 11;
@@ -514,7 +514,7 @@ namespace VinXiangQi
             //
             // button_go_immediately
             //
-            this.button_go_immediately.Location = new System.Drawing.Point(24, 62);
+            this.button_go_immediately.Location = new System.Drawing.Point(316, 22);
             this.button_go_immediately.Name = "button_go_immediately";
             this.button_go_immediately.Size = new System.Drawing.Size(120, 28);
             this.button_go_immediately.TabIndex = 12;
