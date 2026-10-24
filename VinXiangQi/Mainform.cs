@@ -1008,14 +1008,13 @@ namespace VinXiangQi
                 if (File.Exists(engineSettings.ExePath))
                 {
                     var configs = Settings.EngineList[Settings.SelectedEngine].Configs;
-                    if (configs.ContainsKey("Threads"))
-                    {
-                        configs["Threads"] = Settings.ThreadCount.ToString();
-                    }
-                    else
-                    {
-                        configs.Add("Threads", Settings.ThreadCount.ToString());
-                    }
+                    // 给识别和游戏留一个核：线程数超过 (CPU 核数 - 1) 时自动降下来，
+                    // 否则老电脑（2~4 核）上引擎会把 CPU 占满，游戏和识别都卡。
+                    int maxThreads = Math.Max(1, Environment.ProcessorCount - 1);
+                    int threads = Math.Max(1, Math.Min(Settings.ThreadCount, maxThreads));
+                    if (threads != Settings.ThreadCount)
+                        LogHelper.Info("[Engine] 设置线程 " + Settings.ThreadCount + " 超过本机可用核数，实际使用 " + threads + "（CPU " + Environment.ProcessorCount + " 核）");
+                    configs["Threads"] = threads.ToString();
                     Engine = new EngineHelper(engineSettings.ExePath, configs);
                     Engine.BestMoveEvent += Engine_BestMove_Event;
                     Engine.InfoEvent += Engine_InfoEvent;

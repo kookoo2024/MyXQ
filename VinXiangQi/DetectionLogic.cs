@@ -995,12 +995,52 @@ namespace VinXiangQi
         static readonly Brush YoloCenterBrush = Brushes.Lime;
         static readonly Pen YoloRectPen = new Pen(Color.Red, 1);
 
+        static readonly object _predLock = new object();
+        static Bitmap _predCacheImage;
+        static object _predCacheModel;
+        static List<YoloPrediction> _predCacheResult;
+        static long _predCacheHits, _predCacheMisses;
+        static double _predLastMs;
+        static DateTime _predStatLogged = DateTime.Now;
+        public static double LastInferenceMs { get { return _predLastMs; } }
+        public static string InferenceStats { get { return "复用 " + _predCacheHits + " 次，推理 " + _predCacheMisses + " 次，最近推理 " + Math.Round(_predLastMs) + "ms"; } }
+
         List<YoloPrediction> ModelPredict(Bitmap image)
         {
             // 模型推理（核心耗时部分）
-            DateTime st = DateTime.Now;
-            List<YoloPrediction> predictions = Model.Predict(image);
-            Debug.WriteLine("模型耗时: " + Math.Round((DateTime.Now - st).TotalSeconds, 2).ToString() + "s");
+            // 画面与上一帧逐字节相同（例如对手思考时）就直接复用上次识别结果，
+            // 省掉整次模型推理。老电脑上推理是最大的 CPU 开销，这能让空闲时 CPU 占用大幅下降。
+            // 模型是确定性的：同一模型 + 同一张图 → 同一结果，所以后续确认逻辑不受影响。
+            List<YoloPrediction> predictions;
+            var model = Model;
+            lock (_predLock)
+            {
+            if (_predCacheImage != null && ReferenceEquals(_predCacheModel, model)
+                && _predCacheImage.Size == image.Size && ImageHelper.CompareMemCmp(_predCacheImage, image))
+            {
+                predictions = new List<YoloPrediction>(_predCacheResult);
+                _predCacheHits++;
+            }
+            else
+            {
+                DateTime st = DateTime.Now;
+                predictions = model.Predict(image);
+                double ms = (DateTime.Now - st).TotalMilliseconds;
+                Debug.WriteLine("模型耗时: " + Math.Round(ms / 1000, 2).ToString() + "s");
+                _predCacheMisses++;
+                _predLastMs = ms;
+                var oldImg = _predCacheImage;
+                _predCacheImage = (Bitmap)image.Clone();
+                oldImg?.Dispose();
+                _predCacheModel = model;
+                _predCacheResult = new List<YoloPrediction>(predictions);
+            }
+            }
+            if (DateTime.Now - _predStatLogged > TimeSpan.FromMinutes(5))
+            {
+                _predStatLogged = DateTime.Now;
+                LogHelper.Info("[Perf] 识别复用 " + _predCacheHits + " 次，实际推理 " + _predCacheMisses + " 次，最近一次推理 " + Math.Round(_predLastMs) + "ms");
+            }
 
             // 可视化绘制仅在调试状态下进行（pictureBox_show_result 默认隐藏）
             // 非调试状态下跳过整张图复制 + GDI 重建 + 逐框绘制，每帧省 10-30%
