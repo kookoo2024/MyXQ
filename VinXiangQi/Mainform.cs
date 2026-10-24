@@ -522,6 +522,8 @@ namespace VinXiangQi
             _boardContextMenu.Items.Add("开局库管理", null, (s, e) => ToolStripMenuItem_openbook_management_Click(null, null));
             _boardContextMenu.Items.Add("设置", null, (s, e) => button_settings_Click(null, null));
             _boardContextMenu.Items.Add("-");
+            _boardContextMenu.Items.Add("打开日志文件夹", null, (s, e) => OpenLogFolder());
+            _boardContextMenu.Items.Add("复制诊断信息", null, (s, e) => CopyDiagnostics());
             _boardContextMenu.Items.Add("检查更新", null, (s, e) => UpdateHelper.CheckForUpdates(this, false));
             _boardContextMenu.Items.Add("关于", null, (s, e) => ToolStripMenuItem_about_Click(null, null));
 

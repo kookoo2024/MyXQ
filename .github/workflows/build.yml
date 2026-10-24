@@ -39,6 +39,13 @@ jobs:
         id: build
         run: msbuild VinXiangQi.sln /m /p:Configuration=Release /p:Platform="Any CPU" "-flp:logfile=build.log;verbosity=minimal"
 
+      - name: Smoke test (32-bit)
+        id: smoke
+        shell: pwsh
+        run: |
+          & "$env:WINDIR\SysWOW64\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File ci/smoke.ps1 *>&1 | Tee-Object smoke.log
+          if ($LASTEXITCODE -ne 0) { throw "冒烟测试失败" }
+
       - name: Package
         shell: pwsh
         run: |
@@ -59,8 +66,8 @@ jobs:
         run: |
           git config user.name ci; git config user.email ci@users.noreply.github.com
           New-Item -ItemType Directory -Force ci_out | Out-Null
-          foreach ($l in @('restore.log','build.log')) { if (Test-Path $l) { Copy-Item $l ci_out/ } }
-          "run ${{ github.run_id }} sha ${{ github.sha }} restore=${{ steps.restore.outcome }} build=${{ steps.build.outcome }}" | Out-File ci_out/info.txt -Encoding utf8
+          foreach ($l in @('restore.log','build.log','smoke.log')) { if (Test-Path $l) { Copy-Item $l ci_out/ } }
+          "run ${{ github.run_id }} sha ${{ github.sha }} restore=${{ steps.restore.outcome }} build=${{ steps.build.outcome }} smoke=${{ steps.smoke.outcome }}" | Out-File ci_out/info.txt -Encoding utf8
           git checkout --orphan ci-logs
           git rm -rf --cached . -q
           git add -f ci_out

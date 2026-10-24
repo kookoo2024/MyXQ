@@ -46,6 +46,10 @@ namespace VinXiangQi
         public string UpdateRepo = "kookoo2024/MyXQ";
         // 用户在提示框里选择“否”跳过的版本号，启动检查时不再提示该版本
         public string SkippedVersion = "";
+        // 国内网络直连 GitHub 下载常失败：直连失败或长时间无进度时依次改用这些加速前缀
+        // （前缀 + 原下载地址）。只有拿到官方 SHA256 时才会走镜像，下载后必须校验通过。
+        [Newtonsoft.Json.JsonProperty(ObjectCreationHandling = Newtonsoft.Json.ObjectCreationHandling.Replace)]
+        public List<string> UpdateMirrors = new List<string> { "https://ghfast.top/", "https://gh-proxy.com/" };
 
         public enum OpenBookMode
         {
