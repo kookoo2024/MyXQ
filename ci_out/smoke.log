@@ -1,0 +1,18 @@
+进程位数: 32
+\Microsoft.Data.Sqlite.dll
+\Microsoft.Data.Sqlite.xml
+\SQLitePCLRaw.batteries_v2.dll
+\SQLitePCLRaw.core.dll
+\SQLitePCLRaw.provider.e_sqlite3.dll
+\runtimes\win-arm\native\e_sqlite3.dll
+\runtimes\win-x64\native\e_sqlite3.dll
+\runtimes\win-x86\native\e_sqlite3.dll
+Exception calling "Init" with "0" argument(s): "Could not load file or assembly 'SQLitePCLRaw.provider.dynamic_cdecl, 
+Version=2.1.10.2445, Culture=neutral, PublicKeyToken=b68184102cba0b3b' or one of its dependencies. The system cannot 
+find the file specified."
+At D:\a\MyXQ\MyXQ\ci\smoke.ps1:18 char:1
++ [SQLitePCL.Batteries_V2]::Init()
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : FileNotFoundException
+ 
