@@ -1314,7 +1314,9 @@ namespace VinXiangQi
             {
                 LogHelper.Info("[ReloadBoard] 检测到新局(棋子变多 R=" + compareWithLast.RedDiff + " B=" + compareWithLast.BlackDiff + ")，清理上局残留态后正常分析");
                 DisplayStatus("检测到新一局，开始计算");
-                InvalidCount = 0;
+                // 不在这里清零 InvalidCount：识别偶发多认出一个棋子时(如 Diff=5、R=-1)也会进这里，
+                // 若每次清零，下面“变化数异常”分支的计数永远到不了 3，自动重置不会触发，
+                // 程序就会一直卡住直到手动点 GO（2026-10-24 实测）。真正的新局走到正常分析路径时会清零。
                 ExpectedSelfGoBoard = null;
                 ExpectedMove = "";
                 ExpectedBoardMap.Clear();
@@ -1373,6 +1375,7 @@ namespace VinXiangQi
                 if (InvalidCount > 2)
                 {
                     DisplayStatus("错误次数过多，自动重置");
+                    LogHelper.Info("[ReloadBoard] 变化数异常持续 → 自动重置(等同点 GO)");
                     ResetDetection();
                 }
                 return;
