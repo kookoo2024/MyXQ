@@ -1062,6 +1062,13 @@ namespace VinXiangQi
             if (!string.IsNullOrEmpty(Settings.SelectedSolution))
             {
                 string key = Settings.SelectedSolution;
+                if (!SolutionList.ContainsKey(key))
+                {
+                    // 方案文件不存在（如 Solutions 目录缺失或方案被删），避免每秒抛 KeyNotFound
+                    LogHelper.Warn("[LoadCurrentSolution] 方案不存在: " + key + "，可用方案: " + string.Join(",", SolutionList.Keys));
+                    GameHandle = IntPtr.Zero;
+                    return;
+                }
                 CurrentSolution = SolutionList[key];
                 GameHandle = ScreenshotHelper.FindWindow(CurrentSolution.ScreenshotClass, CurrentSolution.ScreenshotCaption);
                 if (CurrentSolution.ClickClass == null && CurrentSolution.ClickCaption == null)
@@ -1091,12 +1098,37 @@ namespace VinXiangQi
 
         void StartDetection(bool fromOpponent)
         {
+            LogHelper.Info("[StartDetection] fromOpponent=" + fromOpponent + " engine=" + (Engine != null)
+                + " model=" + (Model != null) + " solution=" + Settings.SelectedSolution + " handle=" + GameHandle);
             if (Engine == null)
             {
                 DetectEnabled = false;
-                MessageBox.Show("引擎未加载！");
+                MessageBox.Show(this, "引擎未加载，无法开始。\n\n请确认程序目录下的 Engines 文件夹里有引擎（如 pikafish），"
+                    + "或右键 → 引擎管理 里添加引擎。\n\n如果你是把更新包解压到了新文件夹，请改为解压覆盖到原来的程序文件夹。",
+                    "无法开始", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 ModeDisplay();
                 return;
+            }
+            if (Model == null)
+            {
+                DetectEnabled = false;
+                MessageBox.Show(this, "识别模型未加载，无法开始。\n\n请确认程序目录下的 Models 文件夹里有 .onnx 模型文件。"
+                    + "\n\n如果你是把更新包解压到了新文件夹，请改为解压覆盖到原来的程序文件夹。",
+                    "无法开始", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ModeDisplay();
+                return;
+            }
+            if (GameHandle == IntPtr.Zero && Settings.SelectedSolution != "剪切板")
+            {
+                try { LoadCurrentSolution(); } catch (Exception ex) { LogHelper.Error(ex, "StartDetection LoadCurrentSolution"); }
+                if (GameHandle == IntPtr.Zero)
+                {
+                    // 不阻止开始：识别线程会持续寻找窗口，找到后自动开始
+                    MessageBox.Show(this, "没有找到对局窗口（当前方案：" + (string.IsNullOrEmpty(Settings.SelectedSolution) ? "未选择" : Settings.SelectedSolution) + "）。"
+                        + "\n\n请先打开游戏并进入对局；如果游戏已打开，请到 设置 里选择正确的方案，或用“寻找窗口句柄”重新获取。"
+                        + "\n\n找到窗口后会自动开始识别。",
+                        "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
             }
             if (checkBox_debug.Checked)
             {
