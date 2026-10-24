@@ -17,6 +17,52 @@ namespace VinXiangQi
         [DllImport("msvcrt.dll")]
         private static extern int memcmp(IntPtr b1, IntPtr b2, IntPtr count);
 
+        /// <summary>
+        /// 统计两张同尺寸图片在 region 内不同的像素数，并给出差异的外接矩形。
+        /// 用于判断“棋盘区域是否真的变了”（棋盘外的计时器、头像动画等不算）。
+        /// </summary>
+        public static int CountDiffInRegion(Bitmap b1, Bitmap b2, Rectangle region, out Rectangle diffBox)
+        {
+            diffBox = Rectangle.Empty;
+            if (b1 == null || b2 == null || b1.Size != b2.Size) return int.MaxValue;
+            region.Intersect(new Rectangle(Point.Empty, b1.Size));
+            if (region.Width <= 0 || region.Height <= 0) return int.MaxValue;
+            var full = new Rectangle(Point.Empty, b1.Size);
+            var bd1 = b1.LockBits(full, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            var bd2 = b2.LockBits(full, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int[] r1 = new int[region.Width], r2 = new int[region.Width];
+                int count = 0, minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1;
+                for (int y = region.Top; y < region.Bottom; y++)
+                {
+                    long off = (long)y * bd1.Stride + region.Left * 4L;
+                    System.Runtime.InteropServices.Marshal.Copy(new IntPtr(bd1.Scan0.ToInt64() + off), r1, 0, region.Width);
+                    off = (long)y * bd2.Stride + region.Left * 4L;
+                    System.Runtime.InteropServices.Marshal.Copy(new IntPtr(bd2.Scan0.ToInt64() + off), r2, 0, region.Width);
+                    for (int i = 0; i < r1.Length; i++)
+                    {
+                        if (r1[i] != r2[i])
+                        {
+                            count++;
+                            int x = region.Left + i;
+                            if (x < minX) minX = x;
+                            if (x > maxX) maxX = x;
+                            if (y < minY) minY = y;
+                            if (y > maxY) maxY = y;
+                        }
+                    }
+                }
+                if (count > 0) diffBox = Rectangle.FromLTRB(minX, minY, maxX + 1, maxY + 1);
+                return count;
+            }
+            finally
+            {
+                b1.UnlockBits(bd1);
+                b2.UnlockBits(bd2);
+            }
+        }
+
         public static bool CompareMemCmp(Bitmap b1, Bitmap b2)
         {
             if ((b1 == null) != (b2 == null)) return false;
