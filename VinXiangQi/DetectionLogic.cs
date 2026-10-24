@@ -1001,9 +1001,18 @@ namespace VinXiangQi
         static List<YoloPrediction> _predCacheResult;
         static long _predCacheHits, _predCacheMisses;
         static double _predLastMs;
+        static int _predLastDiff;
+        static Rectangle _predLastDiffBox, _predLastRegion;
         static DateTime _predStatLogged = DateTime.Now;
         public static double LastInferenceMs { get { return _predLastMs; } }
-        public static string InferenceStats { get { return "复用 " + _predCacheHits + " 次，推理 " + _predCacheMisses + " 次，最近推理 " + Math.Round(_predLastMs) + "ms"; } }
+        public static string InferenceStats
+        {
+            get
+            {
+                return "复用 " + _predCacheHits + " 次，推理 " + _predCacheMisses + " 次，最近推理 " + Math.Round(_predLastMs) + "ms"
+                    + "，上次变化 " + _predLastDiff + " 像素 于 " + _predLastDiffBox + " / 比较区 " + _predLastRegion;
+            }
+        }
 
         List<YoloPrediction> ModelPredict(Bitmap image)
         {
@@ -1015,8 +1024,29 @@ namespace VinXiangQi
             var model = Model;
             lock (_predLock)
             {
-            if (_predCacheImage != null && ReferenceEquals(_predCacheModel, model)
-                && _predCacheImage.Size == image.Size && ImageHelper.CompareMemCmp(_predCacheImage, image))
+            bool reuse = false;
+            if (_predCacheImage != null && ReferenceEquals(_predCacheModel, model) && _predCacheImage.Size == image.Size)
+            {
+                // 只比较上次识别到的棋盘范围（略放大），棋盘外的计时器、头像、动画变化不触发重新推理
+                Rectangle region = new Rectangle(Point.Empty, image.Size);
+                var boardPred = _predCacheResult.FirstOrDefault(bp => bp.Label.Name == "board");
+                if (boardPred != null)
+                {
+                    var r = Rectangle.Round(boardPred.Rectangle);
+                    r.Inflate(Math.Max(4, r.Width / 40), Math.Max(4, r.Height / 40));
+                    region = r;
+                }
+                Rectangle diffBox;
+                int diff = ImageHelper.CountDiffInRegion(_predCacheImage, image, region, out diffBox);
+                reuse = diff == 0;
+                if (!reuse)
+                {
+                    _predLastDiff = diff;
+                    _predLastDiffBox = diffBox;
+                    _predLastRegion = region;
+                }
+            }
+            if (reuse)
             {
                 predictions = new List<YoloPrediction>(_predCacheResult);
                 _predCacheHits++;
@@ -1039,7 +1069,7 @@ namespace VinXiangQi
             if (DateTime.Now - _predStatLogged > TimeSpan.FromMinutes(5))
             {
                 _predStatLogged = DateTime.Now;
-                LogHelper.Info("[Perf] 识别复用 " + _predCacheHits + " 次，实际推理 " + _predCacheMisses + " 次，最近一次推理 " + Math.Round(_predLastMs) + "ms");
+                LogHelper.Info("[Perf] " + InferenceStats);
             }
 
             // 可视化绘制仅在调试状态下进行（pictureBox_show_result 默认隐藏）
