@@ -41,6 +41,11 @@ namespace VinXiangQi
         // 模拟真人思考节奏，避免像机器一样匀速出招。最长不超过 15 秒。
         // 延时期间若检测到棋盘被人为改动，则放弃本次落子（防止重复落子）。
         public bool MimicHuman = false;
+        // 在线更新：启动时自动检查；发布源为公开仓库 "owner/repo" 的 GitHub Releases
+        public bool AutoCheckUpdate = true;
+        public string UpdateRepo = "kookoo2024/MyXQ-releases";
+        // 用户在提示框里选择“否”跳过的版本号，启动检查时不再提示该版本
+        public string SkippedVersion = "";
 
         public enum OpenBookMode
         {
