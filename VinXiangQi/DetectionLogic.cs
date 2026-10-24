@@ -1001,7 +1001,9 @@ namespace VinXiangQi
         static List<YoloPrediction> _predCacheResult;
         static long _predCacheHits, _predCacheMisses;
         static double _predLastMs;
-        static int _predLastDiff;
+        static int _predLastDiff, _predLastNoise;
+        const int PixelDiffThreshold = 40;
+        const int ReuseMaxChangedPixels = 150;
         static Rectangle _predLastDiffBox, _predLastRegion;
         static DateTime _predStatLogged = DateTime.Now;
         public static double LastInferenceMs { get { return _predLastMs; } }
@@ -1010,7 +1012,7 @@ namespace VinXiangQi
             get
             {
                 return "复用 " + _predCacheHits + " 次，推理 " + _predCacheMisses + " 次，最近推理 " + Math.Round(_predLastMs) + "ms"
-                    + "，上次变化 " + _predLastDiff + " 像素 于 " + _predLastDiffBox + " / 比较区 " + _predLastRegion;
+                    + "，上次明显变化 " + _predLastDiff + " 像素 于 " + _predLastDiffBox + " / 比较区 " + _predLastRegion + "，复用时噪声 " + _predLastNoise + " 像素";
             }
         }
 
@@ -1037,8 +1039,12 @@ namespace VinXiangQi
                     region = r;
                 }
                 Rectangle diffBox;
-                int diff = ImageHelper.CountDiffInRegion(_predCacheImage, image, region, out diffBox);
-                reuse = diff == 0;
+                // 实测 JJ象棋 静止画面每帧也有约 28% 像素轻微变化（渲染/缩放噪声），所以按“明显变化”判断：
+                // 某像素任一颜色通道差超过 PixelDiffThreshold 才算变了，变了的像素少于 ReuseMaxChangedPixels 就复用。
+                // 一枚棋子约 1000~1500 像素，走一步至少两格明显变化，远大于这个阈值。
+                int diff = ImageHelper.CountDiffInRegion(_predCacheImage, image, region, out diffBox, PixelDiffThreshold);
+                reuse = diff < ReuseMaxChangedPixels;
+                if (reuse && diff > 0) _predLastNoise = diff;
                 if (!reuse)
                 {
                     _predLastDiff = diff;

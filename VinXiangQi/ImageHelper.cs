@@ -21,7 +21,7 @@ namespace VinXiangQi
         /// 统计两张同尺寸图片在 region 内不同的像素数，并给出差异的外接矩形。
         /// 用于判断“棋盘区域是否真的变了”（棋盘外的计时器、头像动画等不算）。
         /// </summary>
-        public static int CountDiffInRegion(Bitmap b1, Bitmap b2, Rectangle region, out Rectangle diffBox)
+        public static int CountDiffInRegion(Bitmap b1, Bitmap b2, Rectangle region, out Rectangle diffBox, int channelThreshold = 0)
         {
             diffBox = Rectangle.Empty;
             if (b1 == null || b2 == null || b1.Size != b2.Size) return int.MaxValue;
@@ -42,7 +42,15 @@ namespace VinXiangQi
                     System.Runtime.InteropServices.Marshal.Copy(new IntPtr(bd2.Scan0.ToInt64() + off), r2, 0, region.Width);
                     for (int i = 0; i < r1.Length; i++)
                     {
-                        if (r1[i] != r2[i])
+                        int c1 = r1[i], c2 = r2[i];
+                        if (c1 == c2) continue;
+                        if (channelThreshold > 0)
+                        {
+                            int db = Math.Abs((c1 & 0xFF) - (c2 & 0xFF));
+                            int dg = Math.Abs(((c1 >> 8) & 0xFF) - ((c2 >> 8) & 0xFF));
+                            int dr = Math.Abs(((c1 >> 16) & 0xFF) - ((c2 >> 16) & 0xFF));
+                            if (db <= channelThreshold && dg <= channelThreshold && dr <= channelThreshold) continue;
+                        }
                         {
                             count++;
                             int x = region.Left + i;
