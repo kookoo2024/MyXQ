@@ -627,45 +627,77 @@ namespace VinXiangQi
             LayoutRightPanel();
         }
 
-        // 右侧工具栏均匀排布。
-        // 宽高都动态读取 panel_right 可用区(扣除 Padding)，这样调整 Padding 或
-        // 切换大小尺寸时元素都能自动满宽铺开，不会留出难看的空白带。
-        // 7 个元素自上而下：自动☑ / 双步☑ / 设置 / 大小 / 分数 / END / GO。
+        // 右侧工具栏分组排布（小/大界面通用，大界面按比例放大）。
+        // 旧版把 7 个元素在整列高度里平均分散：大界面下列宽仍只有 70px、
+        // 元素间距被拉到近 40px，按钮又窄又小、散落一列，很不协调。
+        // 现在分三组：
+        //   顶部：自动☑ / 双步☑ / 设置 / 大小（紧凑排列）
+        //   中部：分数（在剩余空白中垂直居中，大界面用大号字）
+        //   底部：END / GO（贴底，GO 最大最醒目）
+        // 组内固定小间距，剩余空间全部留给分数区，整体紧凑、上下呼应。
+        static readonly Font RpFontSmall = new Font("微软雅黑", 9F);
+        static readonly Font RpFontLarge = new Font("微软雅黑", 11F);
+        static readonly Font RpFontGoSmall = new Font("微软雅黑", 9F, FontStyle.Bold);
+        static readonly Font RpFontGoLarge = new Font("微软雅黑", 13F, FontStyle.Bold);
+        static readonly Font RpScoreSmall = new Font("Consolas", 11F, FontStyle.Bold);
+        static readonly Font RpScoreLarge = new Font("Consolas", 18F, FontStyle.Bold);
+        const int RightColSmall = 70, RightColLarge = 104;
+
         void LayoutRightPanel()
         {
-            // 动态读取可用宽高(扣除 Padding)，与高度同理
-            int innerW = panel_right.ClientSize.Width - panel_right.Padding.Left - panel_right.Padding.Right;
-            int innerH = panel_right.ClientSize.Height - panel_right.Padding.Top - panel_right.Padding.Bottom;
+            bool large = _isLargeSize;
+            // 大界面加宽右侧列，按钮不再细长
+            int colW = large ? RightColLarge : RightColSmall;
+            if ((int)tableLayoutPanel_content.ColumnStyles[1].Width != colW)
+            {
+                tableLayoutPanel_content.ColumnStyles[1].Width = colW;
+                tableLayoutPanel_content.PerformLayout();
+            }
+
+            var pad = large ? new Padding(9, 8, 9, 8) : new Padding(6, 3, 6, 3);
+            panel_right.Padding = pad;
+            int innerW = panel_right.ClientSize.Width - pad.Left - pad.Right;
+            int innerH = panel_right.ClientSize.Height - pad.Top - pad.Bottom;
             if (innerW < 30) innerW = 30;   // 容错：构造期 ClientSize 可能尚未就绪
             if (innerH < 120) innerH = 120;
 
-            // 元素固有高度(自上而下)
-            const int hCheck = 20;   // Checkbox 单行
-            const int hBtn   = 24;   // 普通按钮
-            const int hScore = 22;   // 分数 label
-            const int hGo    = 26;   // GO 主操作略高
+            int hCheck = large ? 26 : 20;
+            int hBtn   = large ? 32 : 24;
+            int hGo    = large ? 42 : 26;
+            int gap    = large ? 6 : 3;      // 组内间距
 
-            int totalH = hCheck * 2 + hBtn * 2 + hScore + hBtn + hGo;
-            int gap = (innerH - totalH) / 6; // 7 元素 6 间隙
-            if (gap < 2) gap = 2;
+            Font f = large ? RpFontLarge : RpFontSmall;
+            foreach (Control c in new Control[] { checkBox_auto_go, checkBox_two_steps, button_settings, button_size, button_stop_detection })
+                c.Font = f;
+            button_start.Font = large ? RpFontGoLarge : RpFontGoSmall;
+            label_score.Font = large ? RpScoreLarge : RpScoreSmall;
+            button_size.Text = large ? "缩小" : "放大";
 
-            int y = 0;
-            PlaceRow(checkBox_auto_go,      ref y, innerW, hCheck, gap);
-            PlaceRow(checkBox_two_steps,    ref y, innerW, hCheck, gap);
-            PlaceRow(button_settings,       ref y, innerW, hBtn,   gap);
-            PlaceRow(button_size,           ref y, innerW, hBtn,   gap);
-            PlaceRow(label_score,           ref y, innerW, hScore, gap);
-            PlaceRow(button_stop_detection, ref y, innerW, hBtn,   gap);
-            PlaceRow(button_start,          ref y, innerW, hGo,    gap);
+            int x = pad.Left;
+            // 顶部组
+            int y = pad.Top;
+            Place(checkBox_auto_go,   x, ref y, innerW, hCheck, gap);
+            Place(checkBox_two_steps, x, ref y, innerW, hCheck, gap * 2);
+            Place(button_settings,    x, ref y, innerW, hBtn,   gap);
+            Place(button_size,        x, ref y, innerW, hBtn,   0);
+            int topEnd = y;
+
+            // 底部组（自下而上）
+            int bottom = pad.Top + innerH;
+            button_start.Bounds = new Rectangle(x, bottom - hGo, innerW, hGo);
+            button_stop_detection.Bounds = new Rectangle(x, bottom - hGo - gap - hBtn, innerW, hBtn);
+            int bottomStart = button_stop_detection.Top;
+
+            // 中部：分数在顶部组与底部组之间垂直居中
+            int hScore = large ? 36 : 22;
+            int midY = topEnd + Math.Max(0, (bottomStart - topEnd - hScore) / 2);
+            label_score.Bounds = new Rectangle(x, midY, innerW, hScore);
         }
 
-        // 把控件放到当前行：X=0(满宽居中)、Y=当前行起，并把 y 推进到下一行(高+gap)。
-        // 用 ref y 实现链式累加，避免散落的魔法数字。
-        static void PlaceRow(Control c, ref int y, int w, int h, int gap)
+        static void Place(Control c, int x, ref int y, int w, int h, int gapAfter)
         {
-            c.Location = new Point(0, y);
-            c.Size = new Size(w, h);
-            y += h + gap;
+            c.Bounds = new Rectangle(x, y, w, h);
+            y += h + gapAfter;
         }
 
         // 统一按钮木质外观。isPrimary=true 时用沉稳红底白字(GO)，否则浅木金底深褐字。
@@ -1724,7 +1756,7 @@ namespace VinXiangQi
             this.ClientSize = _isLargeSize
                 ? new Size(LargeW, LargeH)
                 : new Size(SmallW, SmallH);
-            // 尺寸切换后 panel_right 高度变化，重新等间距排布右侧元素
+            // 尺寸切换后 panel_right 宽高变化，重新分组排布右侧元素
             LayoutRightPanel();
         }
 

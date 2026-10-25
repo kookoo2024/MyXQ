@@ -61,7 +61,7 @@ namespace VinXiangQi
             var box = new GroupBox
             {
                 Text = "如何选择引擎",
-                Location = new Point(12, 224),
+                Location = new Point(12, 154),
                 Size = new Size(452, 176),
             };
             var tip = new Label
