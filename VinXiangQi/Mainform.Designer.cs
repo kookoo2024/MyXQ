@@ -213,7 +213,7 @@
             this.button_size.Name = "button_size";
             this.button_size.Size = new System.Drawing.Size(42, 24);
             this.button_size.TabIndex = 14;
-            this.button_size.Text = "大小";
+            this.button_size.Text = "放大";
             this.button_size.Click += new System.EventHandler(this.button_size_Click);
             // 
             // checkBox_auto_go

@@ -124,7 +124,7 @@
             this.tabControl.Location = new System.Drawing.Point(0, 0);
             this.tabControl.Name = "tabControl";
             this.tabControl.SelectedIndex = 0;
-            this.tabControl.Size = new System.Drawing.Size(484, 438);
+            this.tabControl.Size = new System.Drawing.Size(484, 372);
             this.tabControl.TabIndex = 0;
             //
             // tabPage_connection
@@ -135,7 +135,7 @@
             this.tabPage_connection.Location = new System.Drawing.Point(4, 26);
             this.tabPage_connection.Name = "tabPage_connection";
             this.tabPage_connection.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage_connection.Size = new System.Drawing.Size(476, 408);
+            this.tabPage_connection.Size = new System.Drawing.Size(476, 342);
             this.tabPage_connection.TabIndex = 0;
             this.tabPage_connection.Text = "连线设置";
             this.tabPage_connection.UseVisualStyleBackColor = true;
@@ -297,13 +297,12 @@
             //
             // tabPage_engine
             //
-            this.tabPage_engine.Controls.Add(this.groupBox_engine_mode);
             this.tabPage_engine.Controls.Add(this.groupBox_engine_calc);
             this.tabPage_engine.Controls.Add(this.groupBox_engine_select);
             this.tabPage_engine.Location = new System.Drawing.Point(4, 26);
             this.tabPage_engine.Name = "tabPage_engine";
             this.tabPage_engine.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage_engine.Size = new System.Drawing.Size(476, 408);
+            this.tabPage_engine.Size = new System.Drawing.Size(476, 342);
             this.tabPage_engine.TabIndex = 1;
             this.tabPage_engine.Text = "引擎设置";
             this.tabPage_engine.UseVisualStyleBackColor = true;
@@ -481,7 +480,7 @@
             this.groupBox_engine_mode.Controls.Add(this.checkBox_auto_go);
             this.groupBox_engine_mode.Controls.Add(this.checkBox_analyze_mode);
             this.groupBox_engine_mode.Controls.Add(this.button_go_immediately);
-            this.groupBox_engine_mode.Location = new System.Drawing.Point(12, 154);
+            this.groupBox_engine_mode.Location = new System.Drawing.Point(12, 223);
             this.groupBox_engine_mode.Name = "groupBox_engine_mode";
             this.groupBox_engine_mode.Size = new System.Drawing.Size(452, 62);
             this.groupBox_engine_mode.TabIndex = 2;
@@ -530,7 +529,7 @@
             this.tabPage_detection.Location = new System.Drawing.Point(4, 26);
             this.tabPage_detection.Name = "tabPage_detection";
             this.tabPage_detection.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage_detection.Size = new System.Drawing.Size(476, 408);
+            this.tabPage_detection.Size = new System.Drawing.Size(476, 342);
             this.tabPage_detection.TabIndex = 2;
             this.tabPage_detection.Text = "识别设置";
             this.tabPage_detection.UseVisualStyleBackColor = true;
@@ -624,7 +623,7 @@
             this.tabPage_openbook.Location = new System.Drawing.Point(4, 26);
             this.tabPage_openbook.Name = "tabPage_openbook";
             this.tabPage_openbook.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage_openbook.Size = new System.Drawing.Size(476, 408);
+            this.tabPage_openbook.Size = new System.Drawing.Size(476, 342);
             this.tabPage_openbook.TabIndex = 3;
             this.tabPage_openbook.Text = "开局库";
             this.tabPage_openbook.UseVisualStyleBackColor = true;
@@ -672,12 +671,13 @@
             //
             // tabPage_advanced
             //
+            this.tabPage_advanced.Controls.Add(this.groupBox_engine_mode);
             this.tabPage_advanced.Controls.Add(this.groupBox_adv_ui);
             this.tabPage_advanced.Controls.Add(this.groupBox_adv_strategy);
             this.tabPage_advanced.Location = new System.Drawing.Point(4, 26);
             this.tabPage_advanced.Name = "tabPage_advanced";
             this.tabPage_advanced.Padding = new System.Windows.Forms.Padding(3);
-            this.tabPage_advanced.Size = new System.Drawing.Size(476, 408);
+            this.tabPage_advanced.Size = new System.Drawing.Size(476, 342);
             this.tabPage_advanced.TabIndex = 4;
             this.tabPage_advanced.Text = "高级";
             this.tabPage_advanced.UseVisualStyleBackColor = true;
@@ -808,7 +808,7 @@
             //
             this.AutoScaleDimensions = new System.Drawing.SizeF(8F, 15F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(484, 438);
+            this.ClientSize = new System.Drawing.Size(484, 372);
             this.Controls.Add(this.tabControl);
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
